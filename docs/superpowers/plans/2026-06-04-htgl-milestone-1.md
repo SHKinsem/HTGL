@@ -470,7 +470,9 @@ def test_root_is_screen():
 def test_box_nesting_and_parent_indices():
     nodes = parse_html(HTML, screen_w=240, screen_h=320)
     boxes = [n for n in nodes if n.type == BOX]
-    assert len(boxes) == 2
+    # Every <div> is a BOX (the innermost text div is a zero-size BOX that
+    # draws nothing; its text becomes a child TEXT node). 3 divs -> 3 boxes.
+    assert len(boxes) == 3
     outer = boxes[0]
     assert outer.parent == 0          # child of screen
     assert outer.w == 240 and outer.h == 320
