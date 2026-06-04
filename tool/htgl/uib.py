@@ -1,0 +1,47 @@
+"""Node tree (IR) -> .uib binary bytes.
+
+Layout: [Header 16B][Node 18B * count][StringTable].
+See docs spec section 4. All little-endian.
+"""
+
+import struct
+
+from .html_tree import ROOT_PARENT, TEXT
+
+HEADER_FMT = "<4sBBHHHHH"
+NODE_FMT = "<BBHhhhhHHH"
+HEADER_SIZE = struct.calcsize(HEADER_FMT)   # 16
+NODE_SIZE = struct.calcsize(NODE_FMT)       # 18
+NO_TEXT = 0xFFFF
+VERSION = 1
+
+
+def build_uib(nodes, screen_w, screen_h):
+    count = len(nodes)
+    strtab_off = HEADER_SIZE + NODE_SIZE * count
+
+    # First pass: build string table and record each text node's offset.
+    strtab = bytearray()
+    text_offsets = {}  # node index -> offset within string table
+    for i, n in enumerate(nodes):
+        if n.type == TEXT and n.text is not None:
+            data = n.text.encode("ascii", "replace")[:255]
+            text_offsets[i] = len(strtab)
+            strtab.append(len(data))
+            strtab.extend(data)
+
+    out = bytearray()
+    out += struct.pack(
+        HEADER_FMT, b"HTGL", VERSION, 0, count,
+        screen_w, screen_h, strtab_off, 0,
+    )
+    for i, n in enumerate(nodes):
+        parent = ROOT_PARENT if n.parent == ROOT_PARENT else n.parent
+        text_ref = text_offsets.get(i, NO_TEXT)
+        font_id = 0
+        out += struct.pack(
+            NODE_FMT, n.type, font_id, parent,
+            n.x, n.y, n.w, n.h, n.bg, n.fg, text_ref,
+        )
+    out += strtab
+    return bytes(out)
