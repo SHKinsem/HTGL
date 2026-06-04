@@ -38,22 +38,14 @@ class _Builder(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.nodes = nodes
         self.stack = stack  # stack of node indices; top is current parent
-        # Track whether each pushed node index is a "text-only" div placeholder
-        # (no bg/w/h — will be promoted to TEXT if it receives data).
-        self._text_only = set()
 
     def handle_starttag(self, tag, attrs):
         if tag != "div":
             return  # ignore unsupported tags, keep their children inline
         parent_idx = self.stack[-1]
+        node = Node(BOX, parent_idx)
         style = dict(attrs).get("style", "")
         props = parse_style(style)
-        has_box_props = (
-            "background-color" in props
-            or props.get("width", 0) != 0
-            or props.get("height", 0) != 0
-        )
-        node = Node(BOX, parent_idx)
         node.x = props.get("left", 0)
         node.y = props.get("top", 0)
         node.w = props.get("width", 0)
@@ -64,10 +56,7 @@ class _Builder(HTMLParser):
             node.fg = to_rgb565(props["color"])
         node.font_size = props.get("font-size", 8)
         self.nodes.append(node)
-        idx = len(self.nodes) - 1
-        self.stack.append(idx)
-        if not has_box_props:
-            self._text_only.add(idx)
+        self.stack.append(len(self.nodes) - 1)
 
     def handle_endtag(self, tag):
         if tag != "div":
@@ -81,17 +70,11 @@ class _Builder(HTMLParser):
             return
         parent_idx = self.stack[-1]
         parent = self.nodes[parent_idx]
-        # If the parent div has no box properties, promote it to a TEXT node.
-        if parent_idx in self._text_only:
-            parent.type = TEXT
-            parent.text = text
-            self._text_only.discard(parent_idx)
-        else:
-            node = Node(TEXT, parent_idx)
-            node.text = text
-            node.fg = parent.fg
-            node.font_size = parent.font_size
-            self.nodes.append(node)
+        node = Node(TEXT, parent_idx)
+        node.text = text
+        node.fg = parent.fg
+        node.font_size = parent.font_size
+        self.nodes.append(node)
 
 
 def parse_html(html, screen_w, screen_h):

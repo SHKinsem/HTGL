@@ -17,7 +17,7 @@ def test_root_is_screen():
 def test_box_nesting_and_parent_indices():
     nodes = parse_html(HTML, screen_w=240, screen_h=320)
     boxes = [n for n in nodes if n.type == BOX]
-    assert len(boxes) == 2
+    assert len(boxes) == 3
     outer = boxes[0]
     assert outer.parent == 0          # child of screen
     assert outer.w == 240 and outer.h == 320
