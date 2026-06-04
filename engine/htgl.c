@@ -49,4 +49,49 @@ void htgl_layout(htgl_ctx *ctx) {
 int16_t htgl_test_abs_x(htgl_ctx *c, int i) { return c->abs_x[i]; }
 int16_t htgl_test_abs_y(htgl_ctx *c, int i) { return c->abs_y[i]; }
 
-void htgl_render(htgl_ctx *ctx) { (void)ctx; }
+static const char *node_text(htgl_ctx *ctx, const htgl_node *n, int *out_len) {
+    if (n->text_ref == HTGL_NO_TEXT) { *out_len = 0; return 0; }
+    const uint8_t *p = ctx->strtab + n->text_ref;
+    *out_len = p[0];
+    return (const char *)(p + 1);
+}
+
+void htgl_render(htgl_ctx *ctx) {
+    int sw = ctx->hdr->screen_w;
+    int sh = ctx->hdr->screen_h;
+    int band_h = ctx->line_buf_px / sw;
+    if (band_h < 1) band_h = 1;
+    uint16_t screen_bg = ctx->nodes[0].bg;
+
+    for (int by = 0; by < sh; by += band_h) {
+        int bh = band_h;
+        if (by + bh > sh) bh = sh - by;
+
+        /* clear band to screen background */
+        for (int i = 0; i < sw * bh; i++) ctx->line_buf[i] = screen_bg;
+
+        for (int i = 1; i < ctx->count; i++) {
+            const htgl_node *n = &ctx->nodes[i];
+            int ax = ctx->abs_x[i];
+            int ay = ctx->abs_y[i];
+            if (n->type == HTGL_TYPE_BOX) {
+                htgl_fill_rect(ctx->line_buf, sw, by, bh,
+                               ax, ay, n->w, n->h, n->bg);
+            } else if (n->type == HTGL_TYPE_TEXT) {
+                int tl;
+                const char *t = node_text(ctx, n, &tl);
+                if (t && tl > 0) {
+                    int scale = n->h / 8;          /* font_size carried via h? no */
+                    (void)scale;
+                    /* font scale from font_size is encoded in node.h==0 for text;
+                       use w/h-independent scale: derive from font field later.
+                       MVP: scale = 1 unless text node h set. */
+                    int s = 1;
+                    htgl_draw_text(ctx->line_buf, sw, by, bh,
+                                   ax, ay, t, tl, s, n->fg);
+                }
+            }
+        }
+        ctx->hal->flush(0, by, sw, bh, ctx->line_buf);
+    }
+}

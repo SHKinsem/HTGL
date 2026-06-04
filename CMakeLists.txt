@@ -25,3 +25,7 @@ add_test(NAME load COMMAND test_load)
 add_executable(test_layout tests/test_layout.c engine/htgl.c engine/draw.c)
 target_include_directories(test_layout PRIVATE engine tests)
 add_test(NAME layout COMMAND test_layout)
+
+add_executable(test_render tests/test_render.c engine/htgl.c engine/draw.c)
+target_include_directories(test_render PRIVATE engine tests)
+add_test(NAME render COMMAND test_render)
