@@ -81,12 +81,7 @@ void htgl_render(htgl_ctx *ctx) {
                 int tl;
                 const char *t = node_text(ctx, n, &tl);
                 if (t && tl > 0) {
-                    int scale = n->h / 8;          /* font_size carried via h? no */
-                    (void)scale;
-                    /* font scale from font_size is encoded in node.h==0 for text;
-                       use w/h-independent scale: derive from font field later.
-                       MVP: scale = 1 unless text node h set. */
-                    int s = 1;
+                    int s = n->font ? n->font : 1;   /* font byte = integer scale */
                     htgl_draw_text(ctx->line_buf, sw, by, bh,
                                    ax, ay, t, tl, s, n->fg);
                 }

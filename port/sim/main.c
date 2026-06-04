@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "htgl.h"
+#include "htgl_internal.h"
 #include "hal_png.h"
 
 static uint8_t *read_file(const char *path, int *out_len) {

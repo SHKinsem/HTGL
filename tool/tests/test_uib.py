@@ -44,3 +44,10 @@ def test_string_table_for_text():
     length = blob[pos]
     assert length == 2
     assert blob[pos + 1:pos + 1 + length] == b"Hi"
+
+def test_text_font_scale_byte():
+    nodes = parse_html('<div style="font-size:16px">Hi</div>', 100, 100)
+    blob = build_uib(nodes, 100, 100)
+    off = HEADER_SIZE + NODE_SIZE * 2  # text node
+    rec = struct.unpack_from(NODE_FMT, blob, off)
+    assert rec[1] == 2  # font byte = scale = 16/8
