@@ -19,10 +19,22 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     int nodes_end = (int)sizeof(htgl_header) + (int)sizeof(htgl_node) * h->node_count;
     if (nodes_end > len) return -5;
     if (h->strtab_off > len) return -6;
+    /* screen dims must be non-zero (render computes band_h = line_buf_px/screen_w). */
+    if (h->screen_w == 0 || h->screen_h == 0) return -7;
+    /* string table must come after the node array. */
+    if (h->strtab_off < nodes_end) return -8;
+    /* every node's parent must be the root sentinel or a strictly earlier node;
+       this bounds abs_x[parent] and enforces the parent-before-child invariant
+       that the single-pass layout relies on. */
+    const htgl_node *nodes = (const htgl_node *)(blob + sizeof(htgl_header));
+    for (int i = 0; i < h->node_count; i++) {
+        uint16_t parent = nodes[i].parent;
+        if (parent != HTGL_ROOT_PARENT && parent >= (uint16_t)i) return -9;
+    }
 
     ctx->blob = blob;
     ctx->hdr = h;
-    ctx->nodes = (const htgl_node *)(blob + sizeof(htgl_header));
+    ctx->nodes = nodes;
     ctx->strtab = blob + h->strtab_off;
     ctx->count = h->node_count;
     return 0;
