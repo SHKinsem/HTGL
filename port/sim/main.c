@@ -35,6 +35,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "invalid .uib\n"); free(blob); return 1;
     }
     int w = htgl_screen_w(&ctx), h = htgl_screen_h(&ctx);
+    if (w > 1024) {
+        fprintf(stderr, "screen width %d exceeds line buffer (1024)\n", w);
+        free(blob);
+        return 1;
+    }
 
     hal_png_begin(w, h);
     htgl_hal hal = hal_png_get();
