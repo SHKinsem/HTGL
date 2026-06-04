@@ -31,6 +31,22 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
 int htgl_screen_w(const htgl_ctx *ctx) { return ctx->hdr ? ctx->hdr->screen_w : 0; }
 int htgl_screen_h(const htgl_ctx *ctx) { return ctx->hdr ? ctx->hdr->screen_h : 0; }
 
-/* htgl_layout and htgl_render are added in later tasks. */
-void htgl_layout(htgl_ctx *ctx) { (void)ctx; }
+void htgl_layout(htgl_ctx *ctx) {
+    /* Nodes are emitted parent-before-child (DFS), so a single forward pass
+       resolves absolute coordinates. */
+    for (int i = 0; i < ctx->count; i++) {
+        const htgl_node *n = &ctx->nodes[i];
+        if (n->parent == HTGL_ROOT_PARENT) {
+            ctx->abs_x[i] = n->x;
+            ctx->abs_y[i] = n->y;
+        } else {
+            ctx->abs_x[i] = ctx->abs_x[n->parent] + n->x;
+            ctx->abs_y[i] = ctx->abs_y[n->parent] + n->y;
+        }
+    }
+}
+
+int16_t htgl_test_abs_x(htgl_ctx *c, int i) { return c->abs_x[i]; }
+int16_t htgl_test_abs_y(htgl_ctx *c, int i) { return c->abs_y[i]; }
+
 void htgl_render(htgl_ctx *ctx) { (void)ctx; }
