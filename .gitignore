@@ -1,0 +1,8 @@
+build/
+__pycache__/
+*.pyc
+.pytest_cache/
+/examples/*.uib
+/examples/*.png
+# keep golden fixtures under tests/
+!tests/*.golden
