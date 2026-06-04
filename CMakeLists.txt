@@ -13,3 +13,7 @@ target_link_libraries(htgl_sim PRIVATE htgl_engine)
 
 enable_testing()
 # tests are registered by later tasks
+
+add_executable(test_draw tests/test_draw.c engine/draw.c)
+target_include_directories(test_draw PRIVATE engine tests)
+add_test(NAME draw COMMAND test_draw)
