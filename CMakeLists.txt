@@ -33,3 +33,8 @@ add_test(NAME render COMMAND test_render)
 add_executable(test_text tests/test_text.c engine/htgl.c engine/draw.c)
 target_include_directories(test_text PRIVATE engine tests)
 add_test(NAME text COMMAND test_text)
+
+find_program(SH_PROGRAM sh)
+if(SH_PROGRAM)
+  add_test(NAME e2e COMMAND ${SH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/test_e2e.sh)
+endif()
