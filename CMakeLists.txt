@@ -17,3 +17,7 @@ enable_testing()
 add_executable(test_draw tests/test_draw.c engine/draw.c)
 target_include_directories(test_draw PRIVATE engine tests)
 add_test(NAME draw COMMAND test_draw)
+
+add_executable(test_load tests/test_load.c engine/htgl.c engine/draw.c)
+target_include_directories(test_load PRIVATE engine tests)
+add_test(NAME load COMMAND test_load)
