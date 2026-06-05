@@ -38,6 +38,10 @@ add_executable(test_anim tests/test_anim.c engine/htgl.c engine/draw.c)
 target_include_directories(test_anim PRIVATE engine tests)
 add_test(NAME anim COMMAND test_anim)
 
+add_executable(test_touch tests/test_touch.c engine/htgl.c engine/draw.c)
+target_include_directories(test_touch PRIVATE engine tests)
+add_test(NAME touch COMMAND test_touch)
+
 find_program(SH_PROGRAM sh)
 if(SH_PROGRAM)
   add_test(NAME e2e COMMAND ${SH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/test_e2e.sh)
