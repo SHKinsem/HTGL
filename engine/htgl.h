@@ -40,4 +40,26 @@ int htgl_screen_h(const htgl_ctx *ctx);
    to reflect the new values. Safe to call with no animations loaded (returns 0). */
 int htgl_tick(htgl_ctx *ctx, uint32_t now_ms);
 
+/* Touch/tap input.
+ *
+ * htgl_tap_cb is called with the tap_id (the data-tap value, 1..255) stored
+ * in the BOX node's font byte, and the user pointer passed to htgl_set_tap_handler.
+ *
+ * htgl_set_tap_handler: register the tap callback.  Pass cb=NULL to disable.
+ *
+ * htgl_pointer_down: record a pointer-press at (x,y) in screen coordinates.
+ *   Call htgl_layout first so abs_x/abs_y/cur_w/cur_h are current.
+ *
+ * htgl_pointer_up: record a pointer-release at (x,y).  If the release lands on
+ *   the same interactive element that was pressed, the tap callback fires.
+ *   pressed_node is always reset to -1 after this call.
+ *
+ * A "tap" requires press AND release on the same element (standard touch UX).
+ * Non-interactive BOX nodes (font==0) and TEXT nodes are never hit-tested.
+ */
+typedef void (*htgl_tap_cb)(int tap_id, void *user);
+void htgl_set_tap_handler(htgl_ctx *ctx, htgl_tap_cb cb, void *user);
+void htgl_pointer_down(htgl_ctx *ctx, int x, int y);
+void htgl_pointer_up(htgl_ctx *ctx, int x, int y);
+
 #endif

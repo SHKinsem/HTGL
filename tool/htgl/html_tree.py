@@ -72,6 +72,7 @@ class Node:
         self.font_size = 8
         self.text = None
         self.anim = None  # dict(prop, from, to, dur, loop) or None
+        self.tap = 0      # data-tap id (1..255); 0 = not interactive
 
 
 class _Builder(HTMLParser):
@@ -110,6 +111,12 @@ class _Builder(HTMLParser):
             node.fg = to_rgb565(props["color"])
         node.font_size = props.get("font-size", 8)
         node.anim = _parse_anim(attr_dict)  # Phase-1 data-anim (wins if present)
+        # Parse data-tap: store tap id (1..255) or 0 if absent/invalid/out-of-range
+        try:
+            tap_val = int(attr_dict.get("data-tap", "0"))
+        except (ValueError, TypeError):
+            tap_val = 0
+        node.tap = tap_val if 1 <= tap_val <= 255 else 0
         node_idx = len(self.nodes)
         self.nodes.append(node)
         self.stack.append(node_idx)

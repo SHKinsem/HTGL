@@ -57,6 +57,10 @@ struct htgl_ctx {
     int16_t          cur_w[HTGL_MAX_NODES];
     int16_t          cur_h[HTGL_MAX_NODES];
     uint16_t         cur_bg[HTGL_MAX_NODES];
+    /* touch/tap runtime */
+    htgl_tap_cb      tap_cb;
+    void            *tap_user;
+    int              pressed_node;  /* index of node pressed, or -1 */
 };
 
 /* draw.c: fill a rectangle (absolute coords) into a band buffer.

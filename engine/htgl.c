@@ -7,6 +7,7 @@ htgl_ctx *htgl_init(htgl_ctx *ctx, const htgl_hal *hal,
     ctx->hal = hal;
     ctx->line_buf = line_buf;
     ctx->line_buf_px = line_buf_px;
+    ctx->pressed_node = -1;
     return ctx;
 }
 
@@ -179,6 +180,43 @@ static const char *node_text(htgl_ctx *ctx, const htgl_node *n, int *out_len) {
     const uint8_t *p = ctx->strtab + n->text_ref;
     *out_len = p[0];
     return (const char *)(p + 1);
+}
+
+/* ------------------------------------------------------------------ touch */
+
+/* Hit-test (x,y) against interactive BOX nodes.
+ * Iterates from the highest index down to 1 (topmost-first, since later nodes
+ * are drawn on top).  Returns the first matching node index, or -1 if none.
+ * Requires htgl_layout to have been called so abs_x/abs_y/cur_w/cur_h are set. */
+static int hittest(htgl_ctx *ctx, int x, int y) {
+    for (int i = ctx->count - 1; i >= 1; i--) {
+        const htgl_node *n = &ctx->nodes[i];
+        if (n->type != HTGL_TYPE_BOX) continue;
+        if (n->font == 0) continue;  /* not interactive */
+        if (x >= ctx->abs_x[i] && x < ctx->abs_x[i] + ctx->cur_w[i] &&
+            y >= ctx->abs_y[i] && y < ctx->abs_y[i] + ctx->cur_h[i]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void htgl_set_tap_handler(htgl_ctx *ctx, htgl_tap_cb cb, void *user) {
+    ctx->tap_cb   = cb;
+    ctx->tap_user = user;
+}
+
+void htgl_pointer_down(htgl_ctx *ctx, int x, int y) {
+    ctx->pressed_node = hittest(ctx, x, y);
+}
+
+void htgl_pointer_up(htgl_ctx *ctx, int x, int y) {
+    if (ctx->pressed_node >= 0 &&
+        hittest(ctx, x, y) == ctx->pressed_node &&
+        ctx->tap_cb) {
+        ctx->tap_cb(ctx->nodes[ctx->pressed_node].font, ctx->tap_user);
+    }
+    ctx->pressed_node = -1;
 }
 
 void htgl_render(htgl_ctx *ctx) {

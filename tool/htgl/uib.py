@@ -48,9 +48,9 @@ def build_uib(nodes, screen_w, screen_h):
     for i, n in enumerate(nodes):
         parent = n.parent
         text_ref = text_offsets.get(i, NO_TEXT)
-        # font byte carries integer scale for TEXT nodes (font_size / 8, >=1)
+        # font byte: TEXT → integer scale (font_size/8, >=1); BOX → tap id (0..255)
         scale = max(1, int(round(getattr(n, "font_size", 8) / 8)))
-        font_byte = scale if n.type == TEXT else 0
+        font_byte = scale if n.type == TEXT else (getattr(n, "tap", 0) & 0xFF)
         out += struct.pack(
             NODE_FMT, n.type, font_byte, parent,
             n.x, n.y, n.w, n.h, n.bg, n.fg, text_ref,
