@@ -5,12 +5,18 @@ Rules (Milestone 1):
 - Every <div> becomes a BOX node.
 - Any text inside a <div> becomes a TEXT node, child of that div.
 - Geometry/colors come from the element's inline style (see css.parse_style).
+
+Phase 2 — CSS animation:
+- A <style> block with @keyframes and inline animation: shorthand is supported.
+- <style> content is collected as CSS, NOT turned into TEXT nodes.
+- data-anim wins over CSS animation when both are present on the same element.
 """
 
 from html.parser import HTMLParser
 
 from .colors import to_rgb565
 from .css import parse_style
+from .cssanim import parse_keyframes, parse_animation
 
 SCREEN = 0
 BOX = 1
@@ -62,13 +68,26 @@ class _Builder(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.nodes = nodes
         self.stack = stack  # stack of node indices; top is current parent
+        self._in_style = False   # True while inside <style>...</style>
+        self._in_script = False  # True while inside <script>...</script>
+        self._style_chunks = []  # CSS text collected from <style> blocks
+        # Per-node raw "animation" inline style values, indexed by node list position
+        # We store them during parsing and resolve after feed() completes.
+        self._pending_anim = []  # list of (node_index, raw_animation_value)
 
     def handle_starttag(self, tag, attrs):
+        if tag == "style":
+            self._in_style = True
+            return
+        if tag == "script":
+            self._in_script = True
+            return
         if tag != "div":
             return  # ignore unsupported tags, keep their children inline
         parent_idx = self.stack[-1]
         node = Node(BOX, parent_idx)
-        style = dict(attrs).get("style", "")
+        attr_dict = dict(attrs)
+        style = attr_dict.get("style", "")
         props = parse_style(style)
         node.x = props.get("left", 0)
         node.y = props.get("top", 0)
@@ -79,17 +98,34 @@ class _Builder(HTMLParser):
         if "color" in props:
             node.fg = to_rgb565(props["color"])
         node.font_size = props.get("font-size", 8)
-        node.anim = _parse_anim(dict(attrs))
+        node.anim = _parse_anim(attr_dict)  # Phase-1 data-anim (wins if present)
+        node_idx = len(self.nodes)
         self.nodes.append(node)
-        self.stack.append(len(self.nodes) - 1)
+        self.stack.append(node_idx)
+        # Collect raw animation value for Phase-2 resolution (done after feed())
+        raw_anim = props.get("animation") or _parse_inline_animation_from_style(style)
+        if raw_anim:
+            self._pending_anim.append((node_idx, raw_anim))
 
     def handle_endtag(self, tag):
+        if tag == "style":
+            self._in_style = False
+            return
+        if tag == "script":
+            self._in_script = False
+            return
         if tag != "div":
             return
         if len(self.stack) > 1:
             self.stack.pop()
 
     def handle_data(self, data):
+        # Suppress text inside <style> and <script> — do NOT create TEXT nodes for them.
+        if self._in_style:
+            self._style_chunks.append(data)
+            return
+        if self._in_script:
+            return
         text = data.strip()
         if not text:
             return
@@ -101,6 +137,53 @@ class _Builder(HTMLParser):
         node.font_size = parent.font_size
         self.nodes.append(node)
 
+    def resolve_css_anims(self):
+        """Call after feed() to wire CSS @keyframes animations onto nodes.
+
+        Only sets node.anim when not already set by data-anim (Phase-1 wins).
+        """
+        if not self._pending_anim:
+            return
+        css_text = "".join(self._style_chunks)
+        if not css_text.strip():
+            return
+        keyframes = parse_keyframes(css_text)
+        if not keyframes:
+            return
+        for node_idx, raw_anim in self._pending_anim:
+            node = self.nodes[node_idx]
+            if node.anim is not None:
+                continue  # data-anim wins — skip
+            parsed = parse_animation(raw_anim)
+            if parsed is None:
+                continue
+            kf = keyframes.get(parsed["name"])
+            if kf is None:
+                continue
+            node.anim = {
+                "prop": kf["prop"],
+                "from": kf["from"],
+                "to": kf["to"],
+                "dur": max(1, parsed["dur"]),
+                "loop": parsed["loop"],
+            }
+
+
+def _parse_inline_animation_from_style(style):
+    """Extract the raw value of the 'animation' property from an inline style string.
+
+    Returns the raw value string, or None if not present.
+    The css.parse_style function only handles known whitelisted properties; this
+    function handles 'animation' directly.
+    """
+    for decl in style.split(";"):
+        if ":" not in decl:
+            continue
+        name, _, raw = decl.partition(":")
+        if name.strip().lower() == "animation":
+            return raw.strip()
+    return None
+
 
 def parse_html(html, screen_w, screen_h):
     screen = Node(SCREEN, ROOT_PARENT)
@@ -108,5 +191,7 @@ def parse_html(html, screen_w, screen_h):
     screen.h = screen_h
     nodes = [screen]
     stack = [0]
-    _Builder(nodes, stack).feed(html)
+    builder = _Builder(nodes, stack)
+    builder.feed(html)
+    builder.resolve_css_anims()
     return nodes
