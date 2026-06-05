@@ -6,3 +6,6 @@ __pycache__/
 /examples/*.png
 # keep golden fixtures under tests/
 !tests/*.golden
+
+# PlatformIO build output
+.pio/
