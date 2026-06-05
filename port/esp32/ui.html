@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <!-- Screen root: 240x240 dark navy background -->
+  <div style="position:absolute; left:0; top:0; width:240px; height:240px; background-color:#1a1a2e">
+
+    <!-- Header bar: bright accent red strip -->
+    <div style="position:absolute; left:0; top:0; width:240px; height:40px; background-color:#e94560">
+      <div style="position:absolute; left:8px; top:12px; color:#ffffff; font-size:2">HTGL ESP32</div>
+    </div>
+
+    <!-- Animated sliding box: pingpong x-translate with ease-in-out, 1200ms -->
+    <div style="position:absolute; left:20px; top:70px; width:60px; height:60px; background-color:#0f3460"
+         data-anim="x"
+         data-from="20"
+         data-to="160"
+         data-dur="1200"
+         data-loop="pingpong"
+         data-ease="ease-in-out">
+    </div>
+
+    <!-- Color-pulsing box: bg pingpong dark <-> accent, 900ms -->
+    <div style="position:absolute; left:80px; top:150px; width:80px; height:40px; background-color:#16213e"
+         data-anim="bg"
+         data-from="#16213e"
+         data-to="#e94560"
+         data-dur="900"
+         data-loop="pingpong">
+    </div>
+
+    <!-- Tap button (data-tap="1") -->
+    <div data-tap="1"
+         style="position:absolute; left:60px; top:195px; width:120px; height:36px; background-color:#533483">
+      <div style="position:absolute; left:8px; top:14px; color:#ffffff; font-size:1">TAP ME</div>
+    </div>
+
+  </div>
+</body>
+</html>
