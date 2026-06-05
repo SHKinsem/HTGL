@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>HTGL Easing Demo</title></head>
+<body>
+  <div id="screen" style="position:absolute; left:0; top:0; width:240px; height:200px; background-color:#1a1a2e;">
+
+    <!-- Row 1: linear (ease=0) -->
+    <div style="position:absolute; left:5px; top:30px; width:60px; height:16px; background-color:#334466;"></div>
+    <div style="position:absolute; left:10px; top:32px; width:6px; height:12px; background-color:#aaccff;"
+         data-anim="x" data-from="10" data-to="200" data-dur="1500" data-loop="loop" data-ease="linear"></div>
+
+    <!-- Row 2: ease-in (ease=1) -->
+    <div style="position:absolute; left:5px; top:90px; width:60px; height:16px; background-color:#334466;"></div>
+    <div style="position:absolute; left:10px; top:92px; width:6px; height:12px; background-color:#ff9040;"
+         data-anim="x" data-from="10" data-to="200" data-dur="1500" data-loop="loop" data-ease="ease-in"></div>
+
+    <!-- Row 3: ease-out (ease=2) -->
+    <div style="position:absolute; left:5px; top:150px; width:60px; height:16px; background-color:#334466;"></div>
+    <div style="position:absolute; left:10px; top:152px; width:6px; height:12px; background-color:#50ff80;"
+         data-anim="x" data-from="10" data-to="200" data-dur="1500" data-loop="loop" data-ease="ease-out"></div>
+
+    <!-- Labels -->
+    <div style="position:absolute; left:10px; top:12px; width:80px; height:12px; background-color:#000000;">
+      <span style="color:#aaccff; font-size:8px;">linear</span>
+    </div>
+    <div style="position:absolute; left:10px; top:72px; width:80px; height:12px; background-color:#000000;">
+      <span style="color:#ff9040; font-size:8px;">ease-in</span>
+    </div>
+    <div style="position:absolute; left:10px; top:132px; width:80px; height:12px; background-color:#000000;">
+      <span style="color:#50ff80; font-size:8px;">ease-out</span>
+    </div>
+
+  </div>
+</body>
+</html>
