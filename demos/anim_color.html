@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>HTGL Background-Color Animation Demo</title></head>
+<body>
+  <!-- Screen: 240x200, dark background -->
+  <div id="screen" style="position:absolute; left:0; top:0; width:240px; height:200px; background-color:#1a1a2e;">
+
+    <!-- Box pulsing red <-> blue, pingpong, ease-in-out, 1200ms -->
+    <div style="position:absolute; left:85px; top:75px; width:70px; height:50px; background-color:#f80000"
+         data-anim="bg"
+         data-from="#f80000"
+         data-to="#0000f8"
+         data-dur="1200"
+         data-loop="pingpong"
+         data-ease="ease-in-out"></div>
+
+  </div>
+</body>
+</html>
