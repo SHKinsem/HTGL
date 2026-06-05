@@ -18,7 +18,7 @@ static int build(uint8_t *out) {
     hd.version = 1; hd.flags = 0; hd.node_count = 2;
     hd.screen_w = W; hd.screen_h = H;
     hd.strtab_off = sizeof(htgl_header) + 2 * sizeof(htgl_node);
-    hd.reserved = 0;
+    hd.anim_count = 0;
     htgl_node n[2];
     memset(n, 0, sizeof(n));
     n[0].type = HTGL_TYPE_SCREEN; n[0].parent = HTGL_ROOT_PARENT;

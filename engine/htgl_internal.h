@@ -15,7 +15,7 @@ typedef struct {
     uint16_t screen_w;
     uint16_t screen_h;
     uint16_t strtab_off;
-    uint16_t reserved;
+    uint16_t anim_count;   /* was 'reserved'; 0 = no animations (backward compat) */
 } htgl_header;
 
 typedef struct {
@@ -26,19 +26,36 @@ typedef struct {
     uint16_t bg, fg;
     uint16_t text_ref;
 } htgl_node;
+
+/* prop: 0=x 1=y 2=w 3=h.  loop: 0=once 1=loop 2=pingpong. */
+typedef struct {
+    uint16_t node_idx;
+    uint8_t  prop;
+    uint8_t  loop;
+    int16_t  from;
+    int16_t  to;
+    uint16_t dur_ms;
+} htgl_anim;
 #pragma pack(pop)
 
 struct htgl_ctx {
-    const htgl_hal *hal;
-    uint16_t       *line_buf;
-    int             line_buf_px;
-    const uint8_t  *blob;
+    const htgl_hal  *hal;
+    uint16_t        *line_buf;
+    int              line_buf_px;
+    const uint8_t   *blob;
     const htgl_header *hdr;
     const htgl_node   *nodes;
-    const uint8_t  *strtab;
-    int             count;
-    int16_t         abs_x[HTGL_MAX_NODES];
-    int16_t         abs_y[HTGL_MAX_NODES];
+    const uint8_t   *strtab;
+    int              count;
+    int16_t          abs_x[HTGL_MAX_NODES];
+    int16_t          abs_y[HTGL_MAX_NODES];
+    /* animation runtime */
+    const htgl_anim *anims;
+    int              anim_count;
+    int16_t          cur_x[HTGL_MAX_NODES];
+    int16_t          cur_y[HTGL_MAX_NODES];
+    int16_t          cur_w[HTGL_MAX_NODES];
+    int16_t          cur_h[HTGL_MAX_NODES];
 };
 
 /* draw.c: fill a rectangle (absolute coords) into a band buffer.

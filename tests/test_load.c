@@ -10,7 +10,7 @@ static int build_blob(uint8_t *out) {
     h.node_count = 1;
     h.screen_w = 240; h.screen_h = 320;
     h.strtab_off = sizeof(htgl_header) + sizeof(htgl_node);
-    h.reserved = 0;
+    h.anim_count = 0;
     htgl_node n;
     memset(&n, 0, sizeof(n));
     n.type = HTGL_TYPE_SCREEN;
@@ -29,7 +29,7 @@ static int build_blob2(uint8_t *out) {
     h.node_count = 2;
     h.screen_w = 100; h.screen_h = 100;
     h.strtab_off = sizeof(htgl_header) + 2 * sizeof(htgl_node);
-    h.reserved = 0;
+    h.anim_count = 0;
     htgl_node n[2];
     memset(n, 0, sizeof(n));
     n[0].type = HTGL_TYPE_SCREEN; n[0].parent = HTGL_ROOT_PARENT;

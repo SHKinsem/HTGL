@@ -21,8 +21,9 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     if (h->strtab_off > len) return -6;
     /* screen dims must be non-zero (render computes band_h = line_buf_px/screen_w). */
     if (h->screen_w == 0 || h->screen_h == 0) return -7;
-    /* string table must come after the node array. */
-    if (h->strtab_off < nodes_end) return -8;
+    /* string table must come after the node array (and anim table). */
+    int anims_end = nodes_end + (int)sizeof(htgl_anim) * (int)h->anim_count;
+    if (h->strtab_off < anims_end) return -8;
     /* every node's parent must be the root sentinel or a strictly earlier node;
        this bounds abs_x[parent] and enforces the parent-before-child invariant
        that the single-pass layout relies on. */
@@ -31,12 +32,29 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
         uint16_t parent = nodes[i].parent;
         if (parent != HTGL_ROOT_PARENT && parent >= (uint16_t)i) return -9;
     }
+    /* validate anim table: each node_idx must be in range, and the table must fit. */
+    const htgl_anim *anims = (const htgl_anim *)(blob + nodes_end);
+    if (anims_end > len) return -10;
+    for (int i = 0; i < (int)h->anim_count; i++) {
+        if (anims[i].node_idx >= (uint16_t)h->node_count) return -11;
+    }
 
     ctx->blob = blob;
     ctx->hdr = h;
     ctx->nodes = nodes;
     ctx->strtab = blob + h->strtab_off;
     ctx->count = h->node_count;
+    ctx->anims = anims;
+    ctx->anim_count = (int)h->anim_count;
+
+    /* Initialize runtime cur_* from static node fields so load+layout+render
+       without any tick reproduces the original static behavior exactly. */
+    for (int i = 0; i < ctx->count; i++) {
+        ctx->cur_x[i] = nodes[i].x;
+        ctx->cur_y[i] = nodes[i].y;
+        ctx->cur_w[i] = nodes[i].w;
+        ctx->cur_h[i] = nodes[i].h;
+    }
     return 0;
 }
 
@@ -45,21 +63,72 @@ int htgl_screen_h(const htgl_ctx *ctx) { return ctx->hdr ? ctx->hdr->screen_h : 
 
 void htgl_layout(htgl_ctx *ctx) {
     /* Nodes are emitted parent-before-child (DFS), so a single forward pass
-       resolves absolute coordinates. */
+       resolves absolute coordinates. Use cur_x/cur_y so animations are reflected. */
     for (int i = 0; i < ctx->count; i++) {
         const htgl_node *n = &ctx->nodes[i];
         if (n->parent == HTGL_ROOT_PARENT) {
-            ctx->abs_x[i] = n->x;
-            ctx->abs_y[i] = n->y;
+            ctx->abs_x[i] = ctx->cur_x[i];
+            ctx->abs_y[i] = ctx->cur_y[i];
         } else {
-            ctx->abs_x[i] = ctx->abs_x[n->parent] + n->x;
-            ctx->abs_y[i] = ctx->abs_y[n->parent] + n->y;
+            ctx->abs_x[i] = ctx->abs_x[n->parent] + ctx->cur_x[i];
+            ctx->abs_y[i] = ctx->abs_y[n->parent] + ctx->cur_y[i];
         }
     }
 }
 
 int16_t htgl_test_abs_x(htgl_ctx *c, int i) { return c->abs_x[i]; }
 int16_t htgl_test_abs_y(htgl_ctx *c, int i) { return c->abs_y[i]; }
+
+int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
+    int changed = 0;
+    for (int i = 0; i < ctx->anim_count; i++) {
+        const htgl_anim *a = &ctx->anims[i];
+        uint32_t dur = (uint32_t)a->dur_ms;
+        if (dur == 0) continue;
+
+        /* Compute num/den for linear interpolation (integer arithmetic only). */
+        uint32_t num, den;
+        den = dur;
+        switch (a->loop) {
+            case 0: /* once: clamp to [0, dur] */
+                num = (now_ms < dur) ? now_ms : dur;
+                break;
+            case 1: /* loop: wrap */
+                num = now_ms % dur;
+                break;
+            case 2: /* pingpong */
+            default: {
+                uint32_t cycle = dur * 2u;
+                uint32_t c2 = now_ms % cycle;
+                num = (c2 < dur) ? c2 : (cycle - c2);
+                break;
+            }
+        }
+
+        /* value = from + (to-from)*num/den, using int32 intermediate to avoid overflow. */
+        int32_t range = (int32_t)a->to - (int32_t)a->from;
+        int32_t val32 = (int32_t)a->from + range * (int32_t)num / (int32_t)den;
+        /* Clamp to int16 range */
+        if (val32 > 32767) val32 = 32767;
+        if (val32 < -32768) val32 = -32768;
+        int16_t val = (int16_t)val32;
+
+        int idx = (int)a->node_idx;
+        int16_t *target = 0;
+        switch (a->prop) {
+            case 0: target = &ctx->cur_x[idx]; break;
+            case 1: target = &ctx->cur_y[idx]; break;
+            case 2: target = &ctx->cur_w[idx]; break;
+            case 3: target = &ctx->cur_h[idx]; break;
+            default: break;
+        }
+        if (target && *target != val) {
+            *target = val;
+            changed = 1;
+        }
+    }
+    return changed;
+}
 
 static const char *node_text(htgl_ctx *ctx, const htgl_node *n, int *out_len) {
     if (n->text_ref == HTGL_NO_TEXT) { *out_len = 0; return 0; }
@@ -88,7 +157,7 @@ void htgl_render(htgl_ctx *ctx) {
             int ay = ctx->abs_y[i];
             if (n->type == HTGL_TYPE_BOX) {
                 htgl_fill_rect(ctx->line_buf, sw, by, bh,
-                               ax, ay, n->w, n->h, n->bg);
+                               ax, ay, ctx->cur_w[i], ctx->cur_h[i], n->bg);
             } else if (n->type == HTGL_TYPE_TEXT) {
                 int tl;
                 const char *t = node_text(ctx, n, &tl);
