@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include "htgl.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define HTGL_MAX_NODES 256
 
 #pragma pack(push, 1)
@@ -73,5 +77,9 @@ void htgl_fill_rect(uint16_t *band, int band_w, int band_y0, int band_h,
 void htgl_draw_text(uint16_t *band, int band_w, int band_y0, int band_h,
                     int tx, int ty, const char *text, int len,
                     int scale, uint16_t color);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

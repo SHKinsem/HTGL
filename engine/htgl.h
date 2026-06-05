@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define HTGL_TYPE_SCREEN 0
 #define HTGL_TYPE_BOX    1
 #define HTGL_TYPE_TEXT   2
@@ -61,5 +65,9 @@ typedef void (*htgl_tap_cb)(int tap_id, void *user);
 void htgl_set_tap_handler(htgl_ctx *ctx, htgl_tap_cb cb, void *user);
 void htgl_pointer_down(htgl_ctx *ctx, int x, int y);
 void htgl_pointer_up(htgl_ctx *ctx, int x, int y);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
