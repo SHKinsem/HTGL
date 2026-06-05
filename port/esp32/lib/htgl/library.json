@@ -1,0 +1,9 @@
+{
+  "name": "htgl",
+  "version": "1.0.0",
+  "description": "HTGL embedded UI engine (vendored from /engine — keep in sync)",
+  "build": {
+    "srcFilter": ["+<*.c>"],
+    "flags": []
+  }
+}
