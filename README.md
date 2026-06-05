@@ -80,20 +80,36 @@ full framebuffer in RAM. Porting to new hardware means implementing one `flush()
 
 ## Animation
 
-Declare motion with `data-anim` on any `<div>`; the engine interpolates it when you call
-`htgl_tick(now_ms)` (integer-only, no FPU needed):
+Declare motion and the engine interpolates it when you call `htgl_tick(now_ms)` (integer-only, no FPU).
+Two equivalent ways to author it:
+
+**1. `data-anim` attribute** — compact, embedded-friendly:
 
 ```html
 <div style="position:absolute; left:10px; top:60px; width:30px; height:30px; background-color:#ff5050"
-     data-anim="x" data-from="10" data-to="200" data-dur="1000" data-loop="pingpong"></div>
+     data-anim="x" data-from="10" data-to="200" data-dur="1000" data-loop="pingpong" data-ease="ease-out"></div>
 ```
 
-- `data-anim`: `x` · `y` · `w` · `h`
-- `data-loop`: `once` (clamp) · `loop` (restart) · `pingpong` (reverse each pass)
+**2. CSS `@keyframes` + `animation`** — the *same file also animates in a browser*:
 
-The simulator can render a timeline to frames — `htgl_sim in.uib out_prefix <frames> <total_ms>` —
-which stitch into the GIF shown at the top. *(Phase 2, in progress: a CSS `@keyframes`/`animation`
-subset that maps onto the same runtime, so the file also animates in a browser.)*
+```html
+<style>@keyframes slide { from { left: 10px } to { left: 200px } }</style>
+<div style="position:absolute; left:10px; top:60px; width:30px; height:30px; background-color:#ff5050;
+            animation: slide 1s infinite alternate ease-out"></div>
+```
+
+Both compile to **byte-identical** animation records.
+
+- property: `x` · `y` · `w` · `h`
+- loop: `once` (clamp) · `loop` (restart) · `pingpong` (reverse each pass)
+- easing: `linear` · `ease-in` · `ease-out` · `ease-in-out` (integer quadratic curves)
+
+<div align="center"><img src="demos/anim_ease.gif" width="260" alt="linear vs ease-in vs ease-out"/></div>
+
+<sub>Same x-translation under three easing curves — ease-out leads, linear is in the middle, ease-in lags.</sub>
+
+Render a timeline to frames with `htgl_sim in.uib out_prefix <frames> <total_ms>`, then stitch a GIF
+(see `demos/`).
 
 ## The `.uib` binary format
 
@@ -103,7 +119,7 @@ A flat, little-endian, zero-copy layout. Compile-time and runtime loading share 
 |---|---|---|
 | **Header** | 16 B | magic `HTGL`, version, node count, screen W/H, string-table offset, anim count |
 | **Node[]** | 18 B each | type (`SCREEN`/`BOX`/`TEXT`), parent index, x/y/w/h, bg/fg (RGB565), font scale, text ref |
-| **Anim[]** | 10 B each | node index, prop (x/y/w/h), loop mode, from/to, duration (ms) |
+| **Anim[]** | 10 B each | node index, prop (x/y/w/h), mode (loop + easing, packed), from/to, duration (ms) |
 | **String table** | var | length-prefixed ASCII for text nodes |
 
 Animation-free blobs carry `anim count = 0` and an empty `Anim[]`, so they stay byte-identical to the original format.
@@ -133,8 +149,8 @@ cmake -S . -B build && cmake --build build
 ## Test
 
 ```sh
-cd tool && python -m pytest      # transpiler (25 tests)
-ctest --test-dir build           # engine + end-to-end golden image (7 tests)
+cd tool && python -m pytest      # transpiler (75 tests)
+ctest --test-dir build           # engine + end-to-end golden image (7 suites)
 ```
 
 ## Project structure
@@ -142,7 +158,7 @@ ctest --test-dir build           # engine + end-to-end golden image (7 tests)
 ```
 htgl/
 ├── tool/            Python transpiler:  HTML/CSS subset → .uib (+ C array)
-│   └── htgl/        colors · css · html_tree · uib · emitc · cli
+│   └── htgl/        colors · css · cssanim · html_tree · uib · emitc · cli
 ├── engine/          Portable C99 engine (no platform code)
 │   ├── htgl.c       load / layout / banded render
 │   ├── draw.c       rect + bitmap-font rasterization
@@ -161,7 +177,8 @@ htgl/
 |---|---|---|
 | **M1** | HTML → `.uib` → host simulator → PNG (vertical slice) | ✅ complete |
 | **Anim P1** | `data-anim` declarative animation + `htgl_tick` runtime | ✅ complete |
-| **Anim P2** | CSS `@keyframes`/`animation` subset → same runtime | 🚧 in progress |
+| **Anim P2** | CSS `@keyframes`/`animation` subset → same runtime | ✅ complete |
+| **Anim P3** | Easing curves (linear/ease-in/ease-out/ease-in-out) | ✅ complete |
 | **M2** | STM32F1 + ILI9341 port (new `flush()`), engine core unchanged | 🔜 |
 | **M3** | Images, buttons + touch input (event dispatch) | 🔜 |
 | **M4** | Flex/percent layout (fixed-point), easing curves | 🔜 |

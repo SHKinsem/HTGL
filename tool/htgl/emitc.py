@@ -7,7 +7,7 @@ def emit_c_array(blob, symbol):
         f"const unsigned char {symbol}_blob[] = {{",
     ]
     row = []
-    for i, b in enumerate(blob):
+    for b in blob:
         row.append(f"0x{b:02x},")
         if len(row) == 12:
             lines.append("    " + " ".join(row))

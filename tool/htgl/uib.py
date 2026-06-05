@@ -7,7 +7,7 @@ then byte-identical to the original format). All little-endian.
 
 import struct
 
-from .html_tree import ROOT_PARENT, TEXT
+from .html_tree import TEXT
 
 HEADER_FMT = "<4sBBHHHHH"
 NODE_FMT = "<BBHhhhhHHH"
@@ -46,7 +46,7 @@ def build_uib(nodes, screen_w, screen_h):
         screen_w, screen_h, strtab_off, anim_count,
     )
     for i, n in enumerate(nodes):
-        parent = ROOT_PARENT if n.parent == ROOT_PARENT else n.parent
+        parent = n.parent
         text_ref = text_offsets.get(i, NO_TEXT)
         # font byte carries integer scale for TEXT nodes (font_size / 8, >=1)
         scale = max(1, int(round(getattr(n, "font_size", 8) / 8)))
