@@ -1,4 +1,3 @@
-/* vendored from /engine — keep in sync with engine/draw.c */
 #include "htgl_internal.h"
 #include "font8x8_basic.h"
 

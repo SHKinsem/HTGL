@@ -13,6 +13,7 @@ with a tiny portable C99 engine. The same `.html` previews in any browser.
 ![Transpiler: Python 3](https://img.shields.io/badge/transpiler-Python_3-3776AB.svg)
 ![Milestone 1](https://img.shields.io/badge/milestone%201-complete-success.svg)
 ![Animation](https://img.shields.io/badge/animation-data--anim-success.svg)
+![ESP32 port](https://img.shields.io/badge/hardware-ESP32%20%2B%20ST7789-success.svg)
 
 <br/>
 
@@ -100,16 +101,47 @@ Two equivalent ways to author it:
 
 Both compile to **byte-identical** animation records.
 
-- property: `x` · `y` · `w` · `h`
+- property: `x` · `y` · `w` · `h` · `bg` (background color — interpolated per RGB channel)
 - loop: `once` (clamp) · `loop` (restart) · `pingpong` (reverse each pass)
 - easing: `linear` · `ease-in` · `ease-out` · `ease-in-out` (integer quadratic curves)
 
-<div align="center"><img src="demos/anim_ease.gif" width="260" alt="linear vs ease-in vs ease-out"/></div>
+<div align="center">
+<img src="demos/anim_ease.gif" width="240" alt="linear vs ease-in vs ease-out"/>
+&nbsp;
+<img src="demos/anim_color.gif" width="150" alt="background-color pulse"/>
+</div>
 
-<sub>Same x-translation under three easing curves — ease-out leads, linear is in the middle, ease-in lags.</sub>
+<sub>Left: three easing curves (ease-out leads, linear middle, ease-in lags). Right: <code>bg</code> animation — red↔blue blended per channel.</sub>
 
 Render a timeline to frames with `htgl_sim in.uib out_prefix <frames> <total_ms>`, then stitch a GIF
 (see `demos/`).
+
+## Touch input
+
+Make a `<div>` tappable with `data-tap="<1..255>"`. Feed pointer events to the engine and register a
+handler — it hit-tests the topmost button and fires its id to your application code:
+
+```c
+htgl_set_tap_handler(&ctx, on_tap, NULL);   /* void on_tap(int id, void *user) */
+htgl_pointer_down(&ctx, x, y);
+htgl_pointer_up(&ctx, x, y);                 /* fires on_tap(id) if press+release hit the same button */
+```
+
+<div align="center"><img src="demos/buttons.png" width="200" alt="two tap buttons"/></div>
+
+## Run on hardware — ESP32 + ST7789
+
+A ready PlatformIO port lives in [`port/esp32/`](port/esp32/) and **compiles out of the box**
+(`esp32dev`, ~26% flash / ~10% RAM). The UI is embedded as a C array (no SD card needed), animation
+runs via `htgl_tick(millis())` each loop, and the display backend is a one-line TFT_eSPI `flush()`.
+
+```sh
+# edit the SPI pins / panel size in port/esp32/platformio.ini, then:
+pio run -d port/esp32            # compile
+pio run -d port/esp32 -t upload  # flash, then: pio device monitor
+```
+
+Porting to another MCU/display = implement one `flush(x,y,w,h,rgb565)`; the engine is unchanged.
 
 ## The `.uib` binary format
 
@@ -149,8 +181,8 @@ cmake -S . -B build && cmake --build build
 ## Test
 
 ```sh
-cd tool && python -m pytest      # transpiler (75 tests)
-ctest --test-dir build           # engine + end-to-end golden image (7 suites)
+cd tool && python -m pytest      # transpiler (91 tests)
+ctest --test-dir build           # engine + end-to-end golden image (8 suites)
 ```
 
 ## Project structure
@@ -164,8 +196,8 @@ htgl/
 │   ├── draw.c       rect + bitmap-font rasterization
 │   └── *.h          public API + internal layout
 ├── port/
-│   ├── sim/         Host backend: flush() → PNG  (the only host-specific code)
-│   └── stm32/       MCU backend (roadmap)
+│   ├── sim/         Host backend: flush() → PNG
+│   └── esp32/       ESP32 + ST7789 (TFT_eSPI) PlatformIO project
 ├── examples/        hello.html
 ├── tests/           C unit tests + golden .uib / .png
 └── docs/            design spec + implementation plans
@@ -179,8 +211,11 @@ htgl/
 | **Anim P1** | `data-anim` declarative animation + `htgl_tick` runtime | ✅ complete |
 | **Anim P2** | CSS `@keyframes`/`animation` subset → same runtime | ✅ complete |
 | **Anim P3** | Easing curves (linear/ease-in/ease-out/ease-in-out) | ✅ complete |
+| **Anim P4** | Background-color animation (per-channel) | ✅ complete |
+| **Touch** | Tap input subsystem (hit-test + callback) | ✅ complete |
+| **ESP32** | ESP32 + ST7789 port (TFT_eSPI), compiles | ✅ complete |
 | **M2** | STM32F1 + ILI9341 port (new `flush()`), engine core unchanged | 🔜 |
-| **M3** | Images, buttons + touch input (event dispatch) | 🔜 |
+| **M3** | Images + on-screen widgets (sliders, lists) | 🔜 |
 | **M4** | Flex/percent layout (fixed-point), easing curves | 🔜 |
 | **M5** | Runtime `.uib` from SD/OTA, multi-font/UTF-8, browser live preview | 🔜 |
 

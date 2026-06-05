@@ -1,4 +1,3 @@
-/* vendored from /engine — keep in sync with engine/htgl.c */
 #include <string.h>
 #include "htgl_internal.h"
 
