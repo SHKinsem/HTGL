@@ -18,6 +18,29 @@ TEXT = 2
 
 ROOT_PARENT = 0xFFFF
 
+_ANIM_PROPS = ("x", "y", "w", "h")
+
+
+def _int(value, default):
+    try:
+        return int(round(float(str(value).strip())))
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_anim(attrs):
+    """Read data-anim/* attributes into an anim dict, or None if absent/invalid."""
+    prop = attrs.get("data-anim")
+    if prop not in _ANIM_PROPS:
+        return None
+    return {
+        "prop": prop,
+        "from": _int(attrs.get("data-from"), 0),
+        "to": _int(attrs.get("data-to"), 0),
+        "dur": max(1, _int(attrs.get("data-dur"), 1000)),
+        "loop": attrs.get("data-loop", "once"),
+    }
+
 
 class Node:
     def __init__(self, type, parent):
@@ -31,6 +54,7 @@ class Node:
         self.fg = 0x0000
         self.font_size = 8
         self.text = None
+        self.anim = None  # dict(prop, from, to, dur, loop) or None
 
 
 class _Builder(HTMLParser):
@@ -55,6 +79,7 @@ class _Builder(HTMLParser):
         if "color" in props:
             node.fg = to_rgb565(props["color"])
         node.font_size = props.get("font-size", 8)
+        node.anim = _parse_anim(dict(attrs))
         self.nodes.append(node)
         self.stack.append(len(self.nodes) - 1)
 

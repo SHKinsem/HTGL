@@ -1,0 +1,33 @@
+<div style="position:absolute; left:0; top:0; width:240px; height:320px; background-color:#202830">
+  <div style="position:absolute; left:20px; top:16px; color:#ffffff; font-size:8px">what current CSS subset ignores:</div>
+
+  <!-- border-radius: dropped -> stays a sharp rectangle -->
+  <div style="position:absolute; left:20px; top:36px; width:90px; height:50px; background-color:#ff5050; border-radius:16px">
+    <div style="position:absolute; left:6px; top:6px; color:#ffffff; font-size:8px">radius</div>
+  </div>
+
+  <!-- box-shadow + border: dropped -->
+  <div style="position:absolute; left:130px; top:36px; width:90px; height:50px; background-color:#2dd47f; box-shadow:0 4px 8px #000; border:2px solid #fff">
+    <div style="position:absolute; left:6px; top:6px; color:#11151f; font-size:8px">shadow</div>
+  </div>
+
+  <!-- linear-gradient via 'background' (not 'background-color'): no fill at all -->
+  <div style="position:absolute; left:20px; top:104px; width:90px; height:50px; background:linear-gradient(90deg,#ff0,#f0f)">
+    <div style="position:absolute; left:6px; top:6px; color:#ffffff; font-size:8px">gradient</div>
+  </div>
+
+  <!-- opacity + transform:rotate: dropped -> full opacity, no rotation -->
+  <div style="position:absolute; left:130px; top:104px; width:90px; height:50px; background-color:#2d6cdf; opacity:0.4; transform:rotate(20deg)">
+    <div style="position:absolute; left:6px; top:6px; color:#ffffff; font-size:8px">opacity+rotate</div>
+  </div>
+
+  <!-- flexbox: 'display:flex' ignored; children only show because of absolute coords -->
+  <div style="position:absolute; left:20px; top:172px; width:200px; height:40px; background-color:#1a222c; display:flex; justify-content:space-between">
+    <div style="position:absolute; left:8px; top:12px; color:#7fa7ff; font-size:8px">flex? no</div>
+    <div style="position:absolute; left:120px; top:12px; color:#7fa7ff; font-size:8px">absolute only</div>
+  </div>
+
+  <div style="position:absolute; left:20px; top:232px; color:#ff7f7f; font-size:8px">all the above CSS props are</div>
+  <div style="position:absolute; left:20px; top:250px; color:#ff7f7f; font-size:8px">silently dropped by the whitelist</div>
+  <div style="position:absolute; left:20px; top:276px; color:#7f8aa0; font-size:8px">only bg-color/color/font-size/pos work</div>
+</div>
