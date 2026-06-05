@@ -25,6 +25,7 @@ TEXT = 2
 ROOT_PARENT = 0xFFFF
 
 _ANIM_PROPS = ("x", "y", "w", "h")
+_EASE_VALUES = ("linear", "ease-in", "ease-out", "ease-in-out")
 
 
 def _int(value, default):
@@ -39,12 +40,15 @@ def _parse_anim(attrs):
     prop = attrs.get("data-anim")
     if prop not in _ANIM_PROPS:
         return None
+    raw_ease = attrs.get("data-ease", "linear").strip().lower()
+    ease = raw_ease if raw_ease in _EASE_VALUES else "linear"
     return {
         "prop": prop,
         "from": _int(attrs.get("data-from"), 0),
         "to": _int(attrs.get("data-to"), 0),
         "dur": max(1, _int(attrs.get("data-dur"), 1000)),
         "loop": attrs.get("data-loop", "once"),
+        "ease": ease,
     }
 
 
@@ -73,7 +77,7 @@ class _Builder(HTMLParser):
         self._style_chunks = []  # CSS text collected from <style> blocks
         # Per-node raw "animation" inline style values, indexed by node list position
         # We store them during parsing and resolve after feed() completes.
-        self._pending_anim = []  # list of (node_index, raw_animation_value)
+        self._pending_anim = []  # list of (node_index, raw_animation_value, timing_function_or_None)
 
     def handle_starttag(self, tag, attrs):
         if tag == "style":
@@ -105,7 +109,8 @@ class _Builder(HTMLParser):
         # Collect raw animation value for Phase-2 resolution (done after feed())
         raw_anim = props.get("animation") or _parse_inline_animation_from_style(style)
         if raw_anim:
-            self._pending_anim.append((node_idx, raw_anim))
+            timing_fn = _parse_timing_function_from_style(style)
+            self._pending_anim.append((node_idx, raw_anim, timing_fn))
 
     def handle_endtag(self, tag):
         if tag == "style":
@@ -150,11 +155,11 @@ class _Builder(HTMLParser):
         keyframes = parse_keyframes(css_text)
         if not keyframes:
             return
-        for node_idx, raw_anim in self._pending_anim:
+        for node_idx, raw_anim, timing_fn in self._pending_anim:
             node = self.nodes[node_idx]
             if node.anim is not None:
                 continue  # data-anim wins — skip
-            parsed = parse_animation(raw_anim)
+            parsed = parse_animation(raw_anim, timing_function=timing_fn)
             if parsed is None:
                 continue
             kf = keyframes.get(parsed["name"])
@@ -166,6 +171,7 @@ class _Builder(HTMLParser):
                 "to": kf["to"],
                 "dur": max(1, parsed["dur"]),
                 "loop": parsed["loop"],
+                "ease": parsed["ease"],
             }
 
 
@@ -181,6 +187,20 @@ def _parse_inline_animation_from_style(style):
             continue
         name, _, raw = decl.partition(":")
         if name.strip().lower() == "animation":
+            return raw.strip()
+    return None
+
+
+def _parse_timing_function_from_style(style):
+    """Extract the raw value of 'animation-timing-function' from an inline style string.
+
+    Returns the value string, or None if not present.
+    """
+    for decl in style.split(";"):
+        if ":" not in decl:
+            continue
+        name, _, raw = decl.partition(":")
+        if name.strip().lower() == "animation-timing-function":
             return raw.strip()
     return None
 

@@ -99,39 +99,39 @@ class TestParseKeyframes:
 class TestParseAnimation:
     def test_basic_1s(self):
         r = parse_animation("slide 1s")
-        assert r == {"name": "slide", "dur": 1000, "loop": "once"}
+        assert r == {"name": "slide", "dur": 1000, "loop": "once", "ease": "linear"}
 
     def test_basic_500ms(self):
         r = parse_animation("bounce 500ms")
-        assert r == {"name": "bounce", "dur": 500, "loop": "once"}
+        assert r == {"name": "bounce", "dur": 500, "loop": "once", "ease": "linear"}
 
     def test_infinite_gives_loop(self):
         r = parse_animation("slide 1s infinite")
-        assert r == {"name": "slide", "dur": 1000, "loop": "loop"}
+        assert r == {"name": "slide", "dur": 1000, "loop": "loop", "ease": "linear"}
 
     def test_infinite_alternate_gives_pingpong(self):
         r = parse_animation("slide 1s infinite alternate")
-        assert r == {"name": "slide", "dur": 1000, "loop": "pingpong"}
+        assert r == {"name": "slide", "dur": 1000, "loop": "pingpong", "ease": "linear"}
 
     def test_alternate_without_infinite_gives_once(self):
         r = parse_animation("slide 1s alternate")
-        assert r == {"name": "slide", "dur": 1000, "loop": "once"}
+        assert r == {"name": "slide", "dur": 1000, "loop": "once", "ease": "linear"}
 
     def test_order_tolerant_duration_first(self):
         r = parse_animation("1s slide infinite alternate")
-        assert r == {"name": "slide", "dur": 1000, "loop": "pingpong"}
+        assert r == {"name": "slide", "dur": 1000, "loop": "pingpong", "ease": "linear"}
 
     def test_order_tolerant_mixed(self):
         r = parse_animation("infinite slide 800ms alternate")
-        assert r == {"name": "slide", "dur": 800, "loop": "pingpong"}
+        assert r == {"name": "slide", "dur": 800, "loop": "pingpong", "ease": "linear"}
 
     def test_numeric_iteration_count_is_once(self):
         r = parse_animation("slide 1s 3")
-        assert r == {"name": "slide", "dur": 1000, "loop": "once"}
+        assert r == {"name": "slide", "dur": 1000, "loop": "once", "ease": "linear"}
 
     def test_fractional_seconds(self):
         r = parse_animation("slide 1.5s")
-        assert r == {"name": "slide", "dur": 1500, "loop": "once"}
+        assert r == {"name": "slide", "dur": 1500, "loop": "once", "ease": "linear"}
 
     def test_none_returns_none(self):
         assert parse_animation("none") is None
@@ -145,6 +145,30 @@ class TestParseAnimation:
 
     def test_missing_duration_returns_none(self):
         assert parse_animation("slide infinite") is None
+
+    def test_ease_in_shorthand_token(self):
+        r = parse_animation("slide 1s ease-in")
+        assert r == {"name": "slide", "dur": 1000, "loop": "once", "ease": "ease-in"}
+
+    def test_ease_out_shorthand_token(self):
+        r = parse_animation("slide 1s ease-out infinite")
+        assert r == {"name": "slide", "dur": 1000, "loop": "loop", "ease": "ease-out"}
+
+    def test_ease_shorthand_token_maps_to_ease_in_out(self):
+        r = parse_animation("slide 1s ease")
+        assert r == {"name": "slide", "dur": 1000, "loop": "once", "ease": "ease-in-out"}
+
+    def test_ease_in_out_shorthand_token(self):
+        r = parse_animation("slide 1s ease-in-out infinite alternate")
+        assert r == {"name": "slide", "dur": 1000, "loop": "pingpong", "ease": "ease-in-out"}
+
+    def test_timing_function_arg_overrides_shorthand(self):
+        r = parse_animation("slide 1s ease-in", timing_function="ease-out")
+        assert r["ease"] == "ease-out"
+
+    def test_timing_function_arg_linear_explicit(self):
+        r = parse_animation("slide 1s", timing_function="linear")
+        assert r["ease"] == "linear"
 
 
 # ---------------------------------------------------------------------------
@@ -257,3 +281,108 @@ def test_y_axis_css_anim():
     assert div.anim["to"] == 150
     assert div.anim["dur"] == 800
     assert div.anim["loop"] == "pingpong"
+
+
+# ---------------------------------------------------------------------------
+# Easing: CSS animation-timing-function and shorthand timing tokens
+# ---------------------------------------------------------------------------
+
+def _uib_mode_byte(html, screen_w=240, screen_h=200):
+    """Parse html, build uib, return the mode byte of the first anim record."""
+    nodes = parse_html(html, screen_w, screen_h)
+    blob = build_uib(nodes, screen_w, screen_h)
+    off = HEADER_SIZE + NODE_SIZE * len(nodes)
+    _, _, mode, _, _, _ = struct.unpack_from(ANIM_FMT, blob, off)
+    return mode
+
+
+def test_css_timing_function_standalone_ease_in():
+    """animation-timing-function as a separate inline property sets the ease."""
+    html = (
+        '<style>'
+        '@keyframes slide { from { left: 10px } to { left: 200px } }'
+        '</style>'
+        '<div style="left:10px;top:0;width:30px;height:30px;'
+        'animation: slide 1s once;animation-timing-function: ease-in"></div>'
+    )
+    mode = _uib_mode_byte(html)
+    assert (mode >> 4) & 0x0F == 1  # ease-in
+
+
+def test_css_timing_function_standalone_ease_out():
+    html = (
+        '<style>'
+        '@keyframes slide { from { left: 0px } to { left: 100px } }'
+        '</style>'
+        '<div style="left:0;top:0;width:30px;height:30px;'
+        'animation: slide 1s;animation-timing-function: ease-out"></div>'
+    )
+    mode = _uib_mode_byte(html)
+    assert (mode >> 4) & 0x0F == 2  # ease-out
+
+
+def test_css_timing_function_in_shorthand():
+    """Timing keyword embedded inside the animation shorthand."""
+    html = (
+        '<style>'
+        '@keyframes slide { from { left: 0px } to { left: 100px } }'
+        '</style>'
+        '<div style="left:0;top:0;width:30px;height:30px;'
+        'animation: slide ease-in-out 1s infinite"></div>'
+    )
+    mode = _uib_mode_byte(html)
+    assert (mode & 0x0F) == 1         # loop
+    assert (mode >> 4) & 0x0F == 3   # ease-in-out
+
+
+def test_css_timing_function_ease_maps_to_ease_in_out():
+    """CSS 'ease' keyword → ease-in-out (code 3)."""
+    html = (
+        '<style>'
+        '@keyframes slide { from { left: 0px } to { left: 100px } }'
+        '</style>'
+        '<div style="left:0;top:0;width:30px;height:30px;'
+        'animation: slide ease 1s infinite"></div>'
+    )
+    mode = _uib_mode_byte(html)
+    assert (mode >> 4) & 0x0F == 3   # ease-in-out
+
+
+def test_css_timing_function_default_linear():
+    """No timing keyword → linear (code 0), high nibble stays 0."""
+    html = (
+        '<style>'
+        '@keyframes slide { from { left: 0px } to { left: 100px } }'
+        '</style>'
+        '<div style="left:0;top:0;width:30px;height:30px;'
+        'animation: slide 1s"></div>'
+    )
+    mode = _uib_mode_byte(html)
+    assert (mode >> 4) & 0x0F == 0   # linear
+
+
+def test_css_timing_standalone_overrides_shorthand():
+    """Standalone animation-timing-function takes priority over shorthand keyword."""
+    html = (
+        '<style>'
+        '@keyframes slide { from { left: 0px } to { left: 100px } }'
+        '</style>'
+        '<div style="left:0;top:0;width:30px;height:30px;'
+        'animation: slide ease-in 1s;animation-timing-function: ease-out"></div>'
+    )
+    mode = _uib_mode_byte(html)
+    assert (mode >> 4) & 0x0F == 2   # ease-out wins
+
+
+def test_css_anim_backward_compat_no_timing():
+    """Existing CSS anim without any timing keyword must produce high nibble 0 (linear)."""
+    nodes_ref = parse_html(_DATA_ANIM_HTML, 240, 200)
+    blob_ref = build_uib(nodes_ref, 240, 200)
+    ref_record = _extract_anim_record(blob_ref, nodes_ref)
+
+    nodes_css = parse_html(_CSS_ANIM_HTML, 240, 200)
+    blob_css = build_uib(nodes_css, 240, 200)
+    css_record = _extract_anim_record(blob_css, nodes_css)
+
+    # Both must be byte-identical (ease=0 in both)
+    assert css_record == ref_record

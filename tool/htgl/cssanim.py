@@ -171,12 +171,27 @@ def _parse_duration(token):
     return None
 
 
-def parse_animation(value):
+# CSS timing-function → HTGL ease name
+# CSS "ease" (slow start, slow end) is closest to our ease-in-out
+_CSS_TIMING_MAP = {
+    "linear": "linear",
+    "ease": "ease-in-out",
+    "ease-in": "ease-in",
+    "ease-out": "ease-out",
+    "ease-in-out": "ease-in-out",
+}
+
+
+def parse_animation(value, timing_function=None):
     """Parse an inline animation shorthand value.
 
     e.g. "slide 1s infinite alternate" or "bounce 500ms"
 
-    Returns {"name": str, "dur": int_ms, "loop": "once"|"loop"|"pingpong"} or None.
+    timing_function: optional CSS animation-timing-function value (e.g. "ease-in").
+    If None, timing keywords embedded in the shorthand are used; default is "linear".
+
+    Returns {"name": str, "dur": int_ms, "loop": "once"|"loop"|"pingpong",
+             "ease": "linear"|"ease-in"|"ease-out"|"ease-in-out"} or None.
     """
     if not value:
         return None
@@ -189,6 +204,7 @@ def parse_animation(value):
     dur = None
     has_infinite = False
     has_alternate = False
+    ease_from_shorthand = None  # timing keyword found in the shorthand tokens
 
     for token in tokens:
         t = token.lower()
@@ -220,7 +236,12 @@ def parse_animation(value):
         if t in _DIRECTION_KEYWORDS:
             continue
 
-        # Other non-name keywords
+        # Timing function keywords (handled separately from name detection)
+        if t in _CSS_TIMING_MAP:
+            ease_from_shorthand = _CSS_TIMING_MAP[t]
+            continue
+
+        # Other non-name keywords (step-start, step-end, running, paused, fill keywords, etc.)
         if t in _NON_NAME_KEYWORDS:
             continue
 
@@ -239,4 +260,12 @@ def parse_animation(value):
     else:
         loop = "once"
 
-    return {"name": name, "dur": dur, "loop": loop}
+    # Resolve ease: explicit timing_function arg > shorthand keyword > default linear
+    if timing_function is not None:
+        ease = _CSS_TIMING_MAP.get(timing_function.strip().lower(), "linear")
+    elif ease_from_shorthand is not None:
+        ease = ease_from_shorthand
+    else:
+        ease = "linear"
+
+    return {"name": name, "dur": dur, "loop": loop, "ease": ease}

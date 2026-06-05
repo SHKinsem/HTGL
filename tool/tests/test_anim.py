@@ -4,6 +4,7 @@ from htgl.html_tree import parse_html
 from htgl.uib import (
     build_uib, HEADER_FMT, NODE_FMT, ANIM_FMT,
     HEADER_SIZE, NODE_SIZE, ANIM_SIZE,
+    _ANIM_EASE,
 )
 
 ANIM_DIV = (
@@ -66,3 +67,89 @@ def test_text_resolves_with_anim_table_present():
     text_ref = struct.unpack_from(NODE_FMT, blob, HEADER_SIZE + NODE_SIZE * text_idx)[9]
     pos = hdr[6] + text_ref
     assert blob[pos] == 2 and blob[pos + 1:pos + 3] == b"Hi"
+
+
+# ---------------------------------------------------------------------------
+# Easing: data-ease attribute
+# ---------------------------------------------------------------------------
+
+def _get_mode_byte(html, screen_w=240, screen_h=320):
+    """Parse html, build uib, return the mode byte of the first anim record."""
+    nodes = parse_html(html, screen_w, screen_h)
+    blob = build_uib(nodes, screen_w, screen_h)
+    off = HEADER_SIZE + NODE_SIZE * len(nodes)
+    _, _, mode, _, _, _ = struct.unpack_from(ANIM_FMT, blob, off)
+    return mode
+
+
+def test_ease_default_linear():
+    """No data-ease → ease=0 → high nibble 0 → mode == loop_code."""
+    html = (
+        '<div style="position:absolute;left:0;top:0;width:240px;height:320px;">'
+        '<div data-anim="x" data-from="10" data-to="200" data-dur="1000" data-loop="once"></div>'
+        '</div>'
+    )
+    mode = _get_mode_byte(html)
+    loop_code = mode & 0x0F
+    ease_code = (mode >> 4) & 0x0F
+    assert loop_code == 0   # once
+    assert ease_code == 0   # linear (default)
+
+
+def test_ease_linear_explicit():
+    html = (
+        '<div style="width:240px;height:320px;">'
+        '<div data-anim="x" data-from="0" data-to="100" data-dur="500"'
+        ' data-loop="once" data-ease="linear"></div>'
+        '</div>'
+    )
+    mode = _get_mode_byte(html)
+    assert (mode >> 4) & 0x0F == _ANIM_EASE["linear"]   # 0
+
+
+def test_ease_in():
+    html = (
+        '<div style="width:240px;height:320px;">'
+        '<div data-anim="x" data-from="0" data-to="100" data-dur="500"'
+        ' data-loop="once" data-ease="ease-in"></div>'
+        '</div>'
+    )
+    mode = _get_mode_byte(html)
+    assert (mode >> 4) & 0x0F == _ANIM_EASE["ease-in"]   # 1
+
+
+def test_ease_out():
+    html = (
+        '<div style="width:240px;height:320px;">'
+        '<div data-anim="x" data-from="0" data-to="100" data-dur="500"'
+        ' data-loop="loop" data-ease="ease-out"></div>'
+        '</div>'
+    )
+    mode = _get_mode_byte(html)
+    assert (mode & 0x0F) == 1                              # loop
+    assert (mode >> 4) & 0x0F == _ANIM_EASE["ease-out"]  # 2
+
+
+def test_ease_in_out():
+    html = (
+        '<div style="width:240px;height:320px;">'
+        '<div data-anim="x" data-from="0" data-to="100" data-dur="500"'
+        ' data-loop="pingpong" data-ease="ease-in-out"></div>'
+        '</div>'
+    )
+    mode = _get_mode_byte(html)
+    assert (mode & 0x0F) == 2                                 # pingpong
+    assert (mode >> 4) & 0x0F == _ANIM_EASE["ease-in-out"]  # 3
+
+
+def test_backward_compat_no_ease_attr():
+    """Existing data-anim without data-ease must produce mode byte == loop code (ease high nibble 0).
+    This verifies that re-transpiling old HTMLs (like anim_decl.html) is byte-identical."""
+    html = (
+        '<div style="position:absolute;left:0;top:0;width:240px;height:200px;background-color:#1a1a2e;">'
+        '<div style="position:absolute;left:10px;top:60px;width:30px;height:30px;background-color:#ff5050"'
+        ' data-anim="x" data-from="10" data-to="200" data-dur="1000" data-loop="pingpong"></div>'
+        '</div>'
+    )
+    mode = _get_mode_byte(html, 240, 200)
+    assert mode == 2    # pingpong=2, ease=0 → mode=0x02 (unchanged from before easing was added)

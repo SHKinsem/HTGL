@@ -20,6 +20,7 @@ VERSION = 1
 
 _ANIM_PROP = {"x": 0, "y": 1, "w": 2, "h": 3}
 _ANIM_LOOP = {"once": 0, "loop": 1, "pingpong": 2}
+_ANIM_EASE = {"linear": 0, "ease-in": 1, "ease-out": 2, "ease-in-out": 3}
 
 
 def build_uib(nodes, screen_w, screen_h):
@@ -55,9 +56,12 @@ def build_uib(nodes, screen_w, screen_h):
             n.x, n.y, n.w, n.h, n.bg, n.fg, text_ref,
         )
     for node_idx, a in anims:
+        loop_code = _ANIM_LOOP.get(a["loop"], 0)
+        ease_code = _ANIM_EASE.get(a.get("ease", "linear"), 0)
+        mode_byte = loop_code | (ease_code << 4)
         out += struct.pack(
             ANIM_FMT, node_idx, _ANIM_PROP[a["prop"]],
-            _ANIM_LOOP.get(a["loop"], 0), a["from"], a["to"], a["dur"],
+            mode_byte, a["from"], a["to"], a["dur"],
         )
     out += strtab
     return bytes(out)

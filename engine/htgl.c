@@ -86,10 +86,14 @@ int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
         uint32_t dur = (uint32_t)a->dur_ms;
         if (dur == 0) continue;
 
-        /* Compute num/den for linear interpolation (integer arithmetic only). */
+        /* The 'loop' field holds the mode byte: loop = mode & 0x0F, ease = (mode >> 4) & 0x0F. */
+        int loop = (int)(a->loop & 0x0F);
+        int ease = (int)((a->loop >> 4) & 0x0F);
+
+        /* Compute num/den for position fraction (integer arithmetic only). */
         uint32_t num, den;
         den = dur;
-        switch (a->loop) {
+        switch (loop) {
             case 0: /* once: clamp to [0, dur] */
                 num = (now_ms < dur) ? now_ms : dur;
                 break;
@@ -105,9 +109,32 @@ int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
             }
         }
 
-        /* value = from + (to-from)*num/den, using int32 intermediate to avoid overflow. */
+        /* Normalize to fixed-point 0..256 and apply easing curve. */
+        int p = (int)((int32_t)num * 256 / (int32_t)den);  /* 0..256 */
+        switch (ease) {
+            case 1: /* ease-in (quadratic) */
+                p = p * p / 256;
+                break;
+            case 2: { /* ease-out */
+                int q = 256 - p;
+                p = 256 - q * q / 256;
+                break;
+            }
+            case 3: /* ease-in-out */
+                if (p < 128)
+                    p = p * p / 128;
+                else {
+                    int q = 256 - p;
+                    p = 256 - q * q / 128;
+                }
+                break;
+            default: /* linear: no change */
+                break;
+        }
+
+        /* value = from + (to-from)*p/256, using int32 intermediate to avoid overflow. */
         int32_t range = (int32_t)a->to - (int32_t)a->from;
-        int32_t val32 = (int32_t)a->from + range * (int32_t)num / (int32_t)den;
+        int32_t val32 = (int32_t)a->from + range * (int32_t)p / 256;
         /* Clamp to int16 range */
         if (val32 > 32767) val32 = 32767;
         if (val32 < -32768) val32 = -32768;

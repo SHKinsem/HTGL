@@ -323,6 +323,112 @@ static int test_render_uses_cur_w(void) {
     return 0;
 }
 
+/* ------------------------------------------------------------------ Phase D: easing */
+
+/*
+ * Easing math (mode byte = loop | (ease<<4)):
+ *   p = num*256/den   (num/den = 500/1000 = 0.5 → p=128)
+ *
+ *   ease=0 (linear):      p unchanged (128) → value = 0 + 200*128/256 = 100
+ *   ease=1 (ease-in):     p = p*p/256 = 128*128/256 = 64 → 0+200*64/256 = 50
+ *   ease=2 (ease-out):    q=256-128=128; p=256-128*128/256=256-64=192 → 200*192/256=150
+ *   ease=3 (ease-in-out): p<128: p=p*p/128=128*128/128=128 → 200*128/256=100
+ *     (at exact halfway, ease-in-out equals linear)
+ *
+ * For once, from=0, to=200, dur=1000, now=500.
+ */
+
+static int test_tick_easing_linear(void) {
+    /* ease=0 (linear): mode = 0 (once) | (0<<4) = 0 */
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 0 /*x*/, 0 /*mode=once+linear*/, 0, 200, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 500);
+    CHECK(ctx.cur_x[1] == 100);
+    return 0;
+}
+
+static int test_tick_easing_ease_in(void) {
+    /* ease=1 (ease-in): mode = 0 (once) | (1<<4) = 0x10 */
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 0 /*x*/, 0x10 /*mode=once+ease-in*/, 0, 200, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 500);
+    /* p=128 -> p*p/256=64 -> 0+200*64/256=50 */
+    CHECK(ctx.cur_x[1] == 50);
+    return 0;
+}
+
+static int test_tick_easing_ease_out(void) {
+    /* ease=2 (ease-out): mode = 0 (once) | (2<<4) = 0x20 */
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 0 /*x*/, 0x20 /*mode=once+ease-out*/, 0, 200, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 500);
+    /* p=128 -> q=128 -> 256-128*128/256=256-64=192 -> 200*192/256=150 */
+    CHECK(ctx.cur_x[1] == 150);
+    return 0;
+}
+
+static int test_tick_easing_endpoints_unchanged(void) {
+    /* At t=0 and t=dur, all easing curves must produce from and to exactly. */
+    uint8_t blob[256];
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+
+    /* ease-in at t=0 */
+    int len = build_anim_blob(blob, sizeof(blob), 0, 0x10 /*ease-in once*/, 0, 200, 1000);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 0);
+    CHECK(ctx.cur_x[1] == 0);
+    htgl_tick(&ctx, 1000);
+    CHECK(ctx.cur_x[1] == 200);
+
+    /* ease-out at t=0 and t=dur */
+    len = build_anim_blob(blob, sizeof(blob), 0, 0x20 /*ease-out once*/, 0, 200, 1000);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 0);
+    CHECK(ctx.cur_x[1] == 0);
+    htgl_tick(&ctx, 1000);
+    CHECK(ctx.cur_x[1] == 200);
+
+    /* ease-in-out at t=0 and t=dur */
+    len = build_anim_blob(blob, sizeof(blob), 0, 0x30 /*ease-in-out once*/, 0, 200, 1000);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 0);
+    CHECK(ctx.cur_x[1] == 0);
+    htgl_tick(&ctx, 1000);
+    CHECK(ctx.cur_x[1] == 200);
+
+    return 0;
+}
+
+static int test_tick_easing_loop_mode_preserved(void) {
+    /* ease-in with loop mode (mode = 1 | (1<<4) = 0x11) */
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 0, 0x11 /*mode=loop+ease-in*/, 0, 200, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    /* t=1000 in loop mode wraps → num=0, p=0, value=0 */
+    htgl_tick(&ctx, 1000);
+    CHECK(ctx.cur_x[1] == 0);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ main */
 
 int main(void) {
@@ -346,6 +452,13 @@ int main(void) {
     /* Phase C */
     RUN(test_layout_uses_cur_x);
     RUN(test_render_uses_cur_w);
+
+    /* Phase D — easing */
+    RUN(test_tick_easing_linear);
+    RUN(test_tick_easing_ease_in);
+    RUN(test_tick_easing_ease_out);
+    RUN(test_tick_easing_endpoints_unchanged);
+    RUN(test_tick_easing_loop_mode_preserved);
 
     if (fail == 0) printf("ok\n");
     return fail ? 1 : 0;
