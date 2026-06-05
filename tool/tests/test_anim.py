@@ -153,3 +153,91 @@ def test_backward_compat_no_ease_attr():
     )
     mode = _get_mode_byte(html, 240, 200)
     assert mode == 2    # pingpong=2, ease=0 → mode=0x02 (unchanged from before easing was added)
+
+
+# ---------------------------------------------------------------------------
+# bg color animation (prop=4)
+# ---------------------------------------------------------------------------
+
+def _signed16(c):
+    """Wrap an RGB565 uint16 into a signed int16 (bit-preserving)."""
+    return c - 0x10000 if c >= 0x8000 else c
+
+
+def test_bg_anim_prop_code():
+    """data-anim="bg" must produce prop code 4."""
+    html = (
+        '<div style="width:240px;height:200px;">'
+        '<div style="position:absolute;left:10px;top:10px;width:50px;height:50px;'
+        'background-color:#ff0000"'
+        ' data-anim="bg" data-from="#ff0000" data-to="#0000ff"'
+        ' data-dur="1000" data-loop="once"></div>'
+        '</div>'
+    )
+    nodes = parse_html(html, 240, 200)
+    blob = build_uib(nodes, 240, 200)
+    off = HEADER_SIZE + NODE_SIZE * len(nodes)
+    node_idx, prop, loop, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+    assert prop == 4, f"expected prop=4 (bg), got {prop}"
+
+
+def test_bg_anim_from_to_bytes():
+    """data-from="#ff0000" -> RGB565 0xF800; data-to="#0000ff" -> 0x001F.
+    Both are stored as signed int16 (bit-preserving wrap)."""
+    html = (
+        '<div style="width:240px;height:200px;">'
+        '<div style="position:absolute;left:10px;top:10px;width:50px;height:50px;'
+        'background-color:#ff0000"'
+        ' data-anim="bg" data-from="#ff0000" data-to="#0000ff"'
+        ' data-dur="1000" data-loop="once"></div>'
+        '</div>'
+    )
+    nodes = parse_html(html, 240, 200)
+    blob = build_uib(nodes, 240, 200)
+    off = HEADER_SIZE + NODE_SIZE * len(nodes)
+    node_idx, prop, loop, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+
+    # #ff0000 -> RGB565 0xF800 -> signed int16 = -2048
+    # #0000ff -> RGB565 0x001F -> signed int16 = 31
+    red_rgb565   = 0xF800
+    blue_rgb565  = 0x001F
+    assert frm == _signed16(red_rgb565),  f"from={frm} != {_signed16(red_rgb565)}"
+    assert to   == _signed16(blue_rgb565), f"to={to} != {_signed16(blue_rgb565)}"
+
+
+def test_bg_anim_dur_and_loop():
+    """dur and loop are packed correctly for a bg anim."""
+    html = (
+        '<div style="width:240px;height:200px;">'
+        '<div style="width:50px;height:50px;background-color:#f00"'
+        ' data-anim="bg" data-from="#f00" data-to="#00f"'
+        ' data-dur="1200" data-loop="pingpong" data-ease="ease-in-out"></div>'
+        '</div>'
+    )
+    nodes = parse_html(html, 240, 200)
+    blob = build_uib(nodes, 240, 200)
+    off = HEADER_SIZE + NODE_SIZE * len(nodes)
+    node_idx, prop, loop_byte, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+    assert prop == 4
+    assert dur == 1200
+    assert (loop_byte & 0x0F) == 2       # pingpong
+    assert (loop_byte >> 4) & 0x0F == 3  # ease-in-out
+
+
+def test_bg_anim_named_color():
+    """Named colors (e.g., 'red', 'blue') should also work via to_rgb565."""
+    html = (
+        '<div style="width:240px;height:200px;">'
+        '<div style="width:50px;height:50px;background-color:red"'
+        ' data-anim="bg" data-from="red" data-to="blue"'
+        ' data-dur="500" data-loop="once"></div>'
+        '</div>'
+    )
+    nodes = parse_html(html, 240, 200)
+    blob = build_uib(nodes, 240, 200)
+    off = HEADER_SIZE + NODE_SIZE * len(nodes)
+    node_idx, prop, loop_byte, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+    assert prop == 4
+    from htgl.colors import to_rgb565
+    assert frm == _signed16(to_rgb565("red"))
+    assert to   == _signed16(to_rgb565("blue"))

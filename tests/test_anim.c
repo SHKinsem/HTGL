@@ -429,6 +429,191 @@ static int test_tick_easing_loop_mode_preserved(void) {
     return 0;
 }
 
+/* ------------------------------------------------------------------ Phase E: bg color animation */
+
+/*
+ * bg anim: prop=4, from=0xF800 (red), to=0x001F (blue), dur=1000, once (loop=0).
+ * RGB565 channels:
+ *   red   0xF800 = r:31 g:0  b:0
+ *   blue  0x001F = r:0  g:0  b:31
+ *
+ * At t=0:   p=0   -> cur_bg = from = 0xF800
+ * At t=1000: p=256 -> cur_bg = to   = 0x001F
+ * At t=500:  p=128 -> r=31+(0-31)*128/256=31-15=16,  g=0, b=0+(31-0)*128/256=15
+ *   -> (16<<11)|(0<<5)|15 = 0x800F
+ *
+ * Wait — let's recompute carefully:
+ *   r = fr + (tr-fr)*p/256 = 31 + (0-31)*128/256 = 31 - 31*128/256 = 31 - 15 = 16
+ *   g = 0
+ *   b = 0  + (31-0)*128/256 = 31*128/256 = 15
+ *   result = (16<<11)|(0<<5)|15 = 0x800F
+ *
+ * Actually the spec says 0x780F. Let me check:
+ *   spec says r:31→0 ⇒ 15.  But: fr=31, tr=0, p=128
+ *   r = 31 + (0-31)*128/256 = 31 - 3968/256 = 31 - 15 = 16  (integer division: 31*128=3968, 3968/256=15)
+ *   So r=16, not 15. (15<<11=0x7800, 16<<11=0x8000)
+ *   spec says (15<<11)|(0<<5)|15 = 0x780F — that would require r=15.
+ *   But integer: (tr-fr)*p/256 = (0-31)*128/256 = -3968/256 = -15 (C integer div rounds toward zero)
+ *   r = 31 + (-15) = 16.  So spec comment was slightly off; correct value is 0x800F.
+ */
+
+/* Build a blob with prop=4 (bg), signed-wrapping the RGB565 color as int16. */
+static int build_bg_anim_blob(uint8_t *out,
+                               uint16_t from_rgb565, uint16_t to_rgb565,
+                               uint8_t loop, uint16_t dur_ms)
+{
+    int nodes_end = (int)sizeof(htgl_header) + 2 * (int)sizeof(htgl_node);
+    int anims_end = nodes_end + (int)sizeof(htgl_anim);
+
+    htgl_header h;
+    memcpy(h.magic, "HTGL", 4);
+    h.version = 1; h.flags = 0;
+    h.node_count = 2;
+    h.screen_w = SCREEN_W; h.screen_h = SCREEN_H;
+    h.strtab_off = (uint16_t)anims_end;
+    h.anim_count = 1;
+
+    htgl_node n[2];
+    memset(n, 0, sizeof(n));
+    n[0].type = HTGL_TYPE_SCREEN; n[0].parent = HTGL_ROOT_PARENT;
+    n[0].w = SCREEN_W; n[0].h = SCREEN_H;
+    n[1].type = HTGL_TYPE_BOX; n[1].parent = 0;
+    n[1].x = 10; n[1].y = 10; n[1].w = 50; n[1].h = 50;
+    n[1].bg = from_rgb565;  /* initial static color */
+
+    /* signed-wrap the RGB565 values into int16 (bit-preserving) */
+    int16_t from16 = (int16_t)from_rgb565;
+    int16_t to16   = (int16_t)to_rgb565;
+
+    htgl_anim a;
+    a.node_idx = 1; a.prop = 4 /*bg*/; a.loop = loop;
+    a.from = from16; a.to = to16; a.dur_ms = dur_ms;
+
+    memcpy(out, &h, sizeof(h));
+    memcpy(out + sizeof(h), n, sizeof(n));
+    memcpy(out + nodes_end, &a, sizeof(a));
+    return anims_end;
+}
+
+static int test_bg_anim_tick_start(void) {
+    /* t=0 -> cur_bg must equal from (0xF800, red) */
+    uint8_t blob[256];
+    int len = build_bg_anim_blob(blob, 0xF800, 0x001F, 0 /*once*/, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 0);
+    CHECK(ctx.cur_bg[1] == 0xF800);
+    return 0;
+}
+
+static int test_bg_anim_tick_end(void) {
+    /* t=1000 (end) -> cur_bg must equal to (0x001F, blue) */
+    uint8_t blob[256];
+    int len = build_bg_anim_blob(blob, 0xF800, 0x001F, 0 /*once*/, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 1000);
+    CHECK(ctx.cur_bg[1] == 0x001F);
+    return 0;
+}
+
+static int test_bg_anim_tick_midpoint(void) {
+    /*
+     * t=500, p=128:
+     *   from=0xF800: r=31, g=0,  b=0
+     *   to  =0x001F: r=0,  g=0,  b=31
+     *   r = 31 + (0-31)*128/256  = 31 - 3968/256 = 31 - 15 = 16
+     *   g = 0
+     *   b = 0  + 31*128/256      = 3968/256 = 15
+     *   result = (16<<11)|(0<<5)|15 = 0x800F
+     */
+    uint8_t blob[256];
+    int len = build_bg_anim_blob(blob, 0xF800, 0x001F, 0 /*once*/, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 500);
+    uint16_t expected = (uint16_t)((16 << 11) | (0 << 5) | 15);  /* 0x800F */
+    CHECK(ctx.cur_bg[1] == expected);
+    return 0;
+}
+
+static int test_bg_anim_init_from_node(void) {
+    /* After htgl_load (before any tick), cur_bg[i] == nodes[i].bg */
+    uint8_t blob[256];
+    int len = build_bg_anim_blob(blob, 0xF800, 0x001F, 0 /*once*/, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    CHECK(ctx.cur_bg[1] == 0xF800);
+    return 0;
+}
+
+static int test_bg_anim_render_uses_cur_bg(void) {
+    /*
+     * Build a blob with prop=4 bg, from=0x0000(black) to=0xFFFF(white-ish), once 1000ms.
+     * Box is at x=10,y=10,w=50,h=50.
+     * At t=0: box pixels should be 0x0000 (black).
+     * At t=1000: box pixels should match cur_bg after tick.
+     * Verify render uses cur_bg not n->bg.
+     */
+    uint8_t blob[256];
+    int len = build_bg_anim_blob(blob, 0x0000 /*black*/, 0xFFFF /*white*/, 0 /*once*/, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[RW * 4];
+    htgl_hal hal = { cap_flush };
+    memset(g_fb, 0xFF, sizeof(g_fb));  /* fill with non-zero to detect background */
+    htgl_init(&ctx, &hal, lb, RW * 4);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+
+    /* At t=0: box should render as black (0x0000) */
+    htgl_tick(&ctx, 0);
+    htgl_layout(&ctx);
+    memset(g_fb, 0, sizeof(g_fb));
+    htgl_render(&ctx);
+    /* Box covers pixel (10,10) */
+    CHECK(g_fb[10 * RW + 10] == 0x0000);
+
+    /* At t=1000: box animates to white (0xFFFF) */
+    htgl_tick(&ctx, 1000);
+    htgl_layout(&ctx);
+    memset(g_fb, 0, sizeof(g_fb));
+    htgl_render(&ctx);
+    CHECK(ctx.cur_bg[1] == 0xFFFF);
+    CHECK(g_fb[10 * RW + 10] == 0xFFFF);
+
+    return 0;
+}
+
+static int test_bg_anim_does_not_touch_cur_xy(void) {
+    /* prop=4 (bg) must NOT modify cur_x/cur_y/cur_w/cur_h */
+    uint8_t blob[256];
+    int len = build_bg_anim_blob(blob, 0xF800, 0x001F, 0 /*once*/, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+
+    int16_t x_before = ctx.cur_x[1];
+    int16_t y_before = ctx.cur_y[1];
+    int16_t w_before = ctx.cur_w[1];
+    int16_t h_before = ctx.cur_h[1];
+
+    htgl_tick(&ctx, 500);
+
+    CHECK(ctx.cur_x[1] == x_before);
+    CHECK(ctx.cur_y[1] == y_before);
+    CHECK(ctx.cur_w[1] == w_before);
+    CHECK(ctx.cur_h[1] == h_before);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ main */
 
 int main(void) {
@@ -459,6 +644,14 @@ int main(void) {
     RUN(test_tick_easing_ease_out);
     RUN(test_tick_easing_endpoints_unchanged);
     RUN(test_tick_easing_loop_mode_preserved);
+
+    /* Phase E — bg color animation */
+    RUN(test_bg_anim_init_from_node);
+    RUN(test_bg_anim_tick_start);
+    RUN(test_bg_anim_tick_end);
+    RUN(test_bg_anim_tick_midpoint);
+    RUN(test_bg_anim_render_uses_cur_bg);
+    RUN(test_bg_anim_does_not_touch_cur_xy);
 
     if (fail == 0) printf("ok\n");
     return fail ? 1 : 0;

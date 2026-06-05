@@ -3,9 +3,9 @@
 Supported subset:
 - @keyframes <name> { from { <prop>: <val> } to { <prop>: <val> } }
   Also accepts 0% as "from" and 100% as "to".
-  Exactly ONE animated property per keyframe block (left/top/width/height).
-  Property map: left→x  top→y  width→w  height→h
-  Values are px integers (strip "px").
+  Exactly ONE animated property per keyframe block (left/top/width/height/background-color).
+  Property map: left→x  top→y  width→w  height→h  background-color→bg
+  Values are px integers (strip "px") for geometry; color strings for background-color.
 
 - Inline animation shorthand: animation: <name> <duration> [<iteration-count>] [<direction>]
   - name: identifies @keyframes rule
@@ -21,13 +21,19 @@ Returns None for any input that cannot be parsed within the subset.
 
 import re
 
+from .colors import to_rgb565
+
 # Properties we can animate and their HTGL axis codes
 _CSS_PROP_MAP = {
     "left": "x",
     "top": "y",
     "width": "w",
     "height": "h",
+    "background-color": "bg",
 }
+
+# Color-valued properties (parsed via to_rgb565 instead of _parse_px)
+_COLOR_PROPS = {"background-color"}
 
 
 def _strip_comments(css):
@@ -47,7 +53,11 @@ def _parse_px(value):
 
 
 def _parse_block_props(block_text):
-    """Parse declarations inside a keyframe stop block, return {prop: int_px, ...}."""
+    """Parse declarations inside a keyframe stop block, return {prop: value, ...}.
+
+    Geometry properties (left/top/width/height) return int px values.
+    Color properties (background-color) return int RGB565 values.
+    """
     props = {}
     for decl in block_text.split(";"):
         if ":" not in decl:
@@ -56,9 +66,13 @@ def _parse_block_props(block_text):
         name = name.strip().lower()
         raw = raw.strip()
         if name in _CSS_PROP_MAP:
-            val = _parse_px(raw)
-            if val is not None:
+            if name in _COLOR_PROPS:
+                val = to_rgb565(raw)
                 props[name] = val
+            else:
+                val = _parse_px(raw)
+                if val is not None:
+                    props[name] = val
     return props
 
 

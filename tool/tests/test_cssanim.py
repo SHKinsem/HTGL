@@ -386,3 +386,92 @@ def test_css_anim_backward_compat_no_timing():
 
     # Both must be byte-identical (ease=0 in both)
     assert css_record == ref_record
+
+
+# ---------------------------------------------------------------------------
+# CSS background-color animation (prop=4) via @keyframes
+# ---------------------------------------------------------------------------
+
+def _signed16(c):
+    """Wrap an RGB565 uint16 into a signed int16 (bit-preserving)."""
+    return c - 0x10000 if c >= 0x8000 else c
+
+
+class TestCssBgColorAnim:
+    """@keyframes with background-color should produce prop=4 anim records."""
+
+    def test_bg_keyframes_prop_is_4(self):
+        """background-color in @keyframes -> prop 4."""
+        html = (
+            '<style>'
+            '@keyframes pulse { from { background-color: #ff0000 } to { background-color: #0000ff } }'
+            '</style>'
+            '<div style="width:50px;height:50px;animation: pulse 1s infinite alternate"></div>'
+        )
+        nodes = parse_html(html, 240, 200)
+        blob = build_uib(nodes, 240, 200)
+        off = HEADER_SIZE + NODE_SIZE * len(nodes)
+        node_idx, prop, loop_byte, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+        assert prop == 4, f"expected prop=4, got {prop}"
+
+    def test_bg_keyframes_from_to_bytes(self):
+        """from=#ff0000 -> 0xF800 (signed: -2048), to=#0000ff -> 0x001F (signed: 31)."""
+        html = (
+            '<style>'
+            '@keyframes pulse { from { background-color: #ff0000 } to { background-color: #0000ff } }'
+            '</style>'
+            '<div style="width:50px;height:50px;animation: pulse 1s infinite alternate"></div>'
+        )
+        from htgl.colors import to_rgb565
+        nodes = parse_html(html, 240, 200)
+        blob = build_uib(nodes, 240, 200)
+        off = HEADER_SIZE + NODE_SIZE * len(nodes)
+        node_idx, prop, loop_byte, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+        assert frm == _signed16(to_rgb565("#ff0000")), f"from={frm}"
+        assert to   == _signed16(to_rgb565("#0000ff")), f"to={to}"
+
+    def test_bg_keyframes_matches_data_anim(self):
+        """CSS background-color @keyframes produces same anim record as data-anim='bg'."""
+        data_anim_html = (
+            '<div style="width:240px;height:200px;">'
+            '<div style="width:50px;height:50px;background-color:#ff0000"'
+            ' data-anim="bg" data-from="#ff0000" data-to="#0000ff"'
+            ' data-dur="1000" data-loop="pingpong"></div>'
+            '</div>'
+        )
+        css_anim_html = (
+            '<style>'
+            '@keyframes redbluepulse { from { background-color: #ff0000 } to { background-color: #0000ff } }'
+            '</style>'
+            '<div style="width:240px;height:200px;">'
+            '<div style="width:50px;height:50px;background-color:#ff0000;'
+            'animation: redbluepulse 1s infinite alternate"></div>'
+            '</div>'
+        )
+        ref_nodes = parse_html(data_anim_html, 240, 200)
+        ref_blob = build_uib(ref_nodes, 240, 200)
+        ref_record = _extract_anim_record(ref_blob, ref_nodes)
+
+        css_nodes = parse_html(css_anim_html, 240, 200)
+        css_blob = build_uib(css_nodes, 240, 200)
+        css_record = _extract_anim_record(css_blob, css_nodes)
+
+        assert css_record == ref_record, (
+            f"CSS bg record {css_record!r} != data-anim bg record {ref_record!r}"
+        )
+
+    def test_bg_keyframes_loop_and_dur(self):
+        """Loop and duration are packed correctly for bg CSS anim."""
+        html = (
+            '<style>'
+            '@keyframes fadecolor { from { background-color: #f00 } to { background-color: #00f } }'
+            '</style>'
+            '<div style="width:50px;height:50px;animation: fadecolor 1200ms infinite alternate"></div>'
+        )
+        nodes = parse_html(html, 240, 200)
+        blob = build_uib(nodes, 240, 200)
+        off = HEADER_SIZE + NODE_SIZE * len(nodes)
+        node_idx, prop, loop_byte, frm, to, dur = struct.unpack_from(ANIM_FMT, blob, off)
+        assert prop == 4
+        assert dur == 1200
+        assert (loop_byte & 0x0F) == 2   # pingpong (infinite + alternate)

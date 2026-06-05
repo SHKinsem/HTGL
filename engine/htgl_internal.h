@@ -27,7 +27,7 @@ typedef struct {
     uint16_t text_ref;
 } htgl_node;
 
-/* prop: 0=x 1=y 2=w 3=h.  loop: 0=once 1=loop 2=pingpong. */
+/* prop: 0=x 1=y 2=w 3=h 4=bg.  loop: 0=once 1=loop 2=pingpong. */
 typedef struct {
     uint16_t node_idx;
     uint8_t  prop;
@@ -56,6 +56,7 @@ struct htgl_ctx {
     int16_t          cur_y[HTGL_MAX_NODES];
     int16_t          cur_w[HTGL_MAX_NODES];
     int16_t          cur_h[HTGL_MAX_NODES];
+    uint16_t         cur_bg[HTGL_MAX_NODES];
 };
 
 /* draw.c: fill a rectangle (absolute coords) into a band buffer.

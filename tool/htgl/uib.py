@@ -18,7 +18,7 @@ ANIM_SIZE = struct.calcsize(ANIM_FMT)       # 10
 NO_TEXT = 0xFFFF
 VERSION = 1
 
-_ANIM_PROP = {"x": 0, "y": 1, "w": 2, "h": 3}
+_ANIM_PROP = {"x": 0, "y": 1, "w": 2, "h": 3, "bg": 4}
 _ANIM_LOOP = {"once": 0, "loop": 1, "pingpong": 2}
 _ANIM_EASE = {"linear": 0, "ease-in": 1, "ease-out": 2, "ease-in-out": 3}
 
@@ -59,9 +59,17 @@ def build_uib(nodes, screen_w, screen_h):
         loop_code = _ANIM_LOOP.get(a["loop"], 0)
         ease_code = _ANIM_EASE.get(a.get("ease", "linear"), 0)
         mode_byte = loop_code | (ease_code << 4)
+        # For bg (prop=4) the from/to values are RGB565 uint16 reinterpreted as int16.
+        # Signed-wrap: values >= 0x8000 are stored as negative int16 (bit-preserving).
+        if a["prop"] == "bg":
+            frm = a["from"] - 0x10000 if a["from"] >= 0x8000 else a["from"]
+            tov = a["to"]   - 0x10000 if a["to"]   >= 0x8000 else a["to"]
+        else:
+            frm = a["from"]
+            tov = a["to"]
         out += struct.pack(
             ANIM_FMT, node_idx, _ANIM_PROP[a["prop"]],
-            mode_byte, a["from"], a["to"], a["dur"],
+            mode_byte, frm, tov, a["dur"],
         )
     out += strtab
     return bytes(out)

@@ -50,10 +50,11 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     /* Initialize runtime cur_* from static node fields so load+layout+render
        without any tick reproduces the original static behavior exactly. */
     for (int i = 0; i < ctx->count; i++) {
-        ctx->cur_x[i] = nodes[i].x;
-        ctx->cur_y[i] = nodes[i].y;
-        ctx->cur_w[i] = nodes[i].w;
-        ctx->cur_h[i] = nodes[i].h;
+        ctx->cur_x[i]  = nodes[i].x;
+        ctx->cur_y[i]  = nodes[i].y;
+        ctx->cur_w[i]  = nodes[i].w;
+        ctx->cur_h[i]  = nodes[i].h;
+        ctx->cur_bg[i] = nodes[i].bg;
     }
     return 0;
 }
@@ -132,26 +133,42 @@ int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
                 break;
         }
 
-        /* value = from + (to-from)*p/256, using int32 intermediate to avoid overflow. */
-        int32_t range = (int32_t)a->to - (int32_t)a->from;
-        int32_t val32 = (int32_t)a->from + range * (int32_t)p / 256;
-        /* Clamp to int16 range */
-        if (val32 > 32767) val32 = 32767;
-        if (val32 < -32768) val32 = -32768;
-        int16_t val = (int16_t)val32;
-
         int idx = (int)a->node_idx;
-        int16_t *target = 0;
-        switch (a->prop) {
-            case 0: target = &ctx->cur_x[idx]; break;
-            case 1: target = &ctx->cur_y[idx]; break;
-            case 2: target = &ctx->cur_w[idx]; break;
-            case 3: target = &ctx->cur_h[idx]; break;
-            default: break;
-        }
-        if (target && *target != val) {
-            *target = val;
-            changed = 1;
+
+        if (a->prop == 4) {
+            /* bg color: interpolate per RGB565 channel */
+            uint16_t cf = (uint16_t)a->from, ct = (uint16_t)a->to;
+            int fr = (cf >> 11) & 0x1F, fg = (cf >> 5) & 0x3F, fb = cf & 0x1F;
+            int tr = (ct >> 11) & 0x1F, tg = (ct >> 5) & 0x3F, tb = ct & 0x1F;
+            int r = fr + (tr - fr) * p / 256;
+            int g = fg + (tg - fg) * p / 256;
+            int b = fb + (tb - fb) * p / 256;
+            uint16_t color = (uint16_t)((r << 11) | (g << 5) | b);
+            if (ctx->cur_bg[idx] != color) {
+                ctx->cur_bg[idx] = color;
+                changed = 1;
+            }
+        } else {
+            /* value = from + (to-from)*p/256, using int32 intermediate to avoid overflow. */
+            int32_t range = (int32_t)a->to - (int32_t)a->from;
+            int32_t val32 = (int32_t)a->from + range * (int32_t)p / 256;
+            /* Clamp to int16 range */
+            if (val32 > 32767) val32 = 32767;
+            if (val32 < -32768) val32 = -32768;
+            int16_t val = (int16_t)val32;
+
+            int16_t *target = 0;
+            switch (a->prop) {
+                case 0: target = &ctx->cur_x[idx]; break;
+                case 1: target = &ctx->cur_y[idx]; break;
+                case 2: target = &ctx->cur_w[idx]; break;
+                case 3: target = &ctx->cur_h[idx]; break;
+                default: break;
+            }
+            if (target && *target != val) {
+                *target = val;
+                changed = 1;
+            }
         }
     }
     return changed;
@@ -184,7 +201,7 @@ void htgl_render(htgl_ctx *ctx) {
             int ay = ctx->abs_y[i];
             if (n->type == HTGL_TYPE_BOX) {
                 htgl_fill_rect(ctx->line_buf, sw, by, bh,
-                               ax, ay, ctx->cur_w[i], ctx->cur_h[i], n->bg);
+                               ax, ay, ctx->cur_w[i], ctx->cur_h[i], ctx->cur_bg[i]);
             } else if (n->type == HTGL_TYPE_TEXT) {
                 int tl;
                 const char *t = node_text(ctx, n, &tl);

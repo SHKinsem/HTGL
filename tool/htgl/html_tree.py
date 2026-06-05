@@ -24,7 +24,7 @@ TEXT = 2
 
 ROOT_PARENT = 0xFFFF
 
-_ANIM_PROPS = ("x", "y", "w", "h")
+_ANIM_PROPS = ("x", "y", "w", "h", "bg")
 _EASE_VALUES = ("linear", "ease-in", "ease-out", "ease-in-out")
 
 
@@ -42,11 +42,18 @@ def _parse_anim(attrs):
         return None
     raw_ease = attrs.get("data-ease", "linear").strip().lower()
     ease = raw_ease if raw_ease in _EASE_VALUES else "linear"
+    if prop == "bg":
+        # from/to are color values parsed via to_rgb565 (returned as uint16)
+        from_val = to_rgb565(attrs.get("data-from", "black"))
+        to_val   = to_rgb565(attrs.get("data-to",   "black"))
+    else:
+        from_val = _int(attrs.get("data-from"), 0)
+        to_val   = _int(attrs.get("data-to"),   0)
     return {
         "prop": prop,
-        "from": _int(attrs.get("data-from"), 0),
-        "to": _int(attrs.get("data-to"), 0),
-        "dur": max(1, _int(attrs.get("data-dur"), 1000)),
+        "from": from_val,
+        "to":   to_val,
+        "dur":  max(1, _int(attrs.get("data-dur"), 1000)),
         "loop": attrs.get("data-loop", "once"),
         "ease": ease,
     }
