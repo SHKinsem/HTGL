@@ -35,7 +35,7 @@ def _int(value, default):
         return default
 
 
-def _parse_anim(attrs):
+def _parse_anim(attrs, diag=None):
     """Read data-anim/* attributes into an anim dict, or None if absent/invalid."""
     prop = attrs.get("data-anim")
     if prop not in _ANIM_PROPS:
@@ -44,8 +44,8 @@ def _parse_anim(attrs):
     ease = raw_ease if raw_ease in _EASE_VALUES else "linear"
     if prop == "bg":
         # from/to are color values parsed via to_rgb565 (returned as uint16)
-        from_val = to_rgb565(attrs.get("data-from", "black"))
-        to_val   = to_rgb565(attrs.get("data-to",   "black"))
+        from_val = to_rgb565(attrs.get("data-from", "black"), diag)
+        to_val   = to_rgb565(attrs.get("data-to",   "black"), diag)
     else:
         from_val = _int(attrs.get("data-from"), 0)
         to_val   = _int(attrs.get("data-to"),   0)
@@ -76,10 +76,11 @@ class Node:
 
 
 class _Builder(HTMLParser):
-    def __init__(self, nodes, stack):
+    def __init__(self, nodes, stack, diag=None):
         super().__init__(convert_charrefs=True)
         self.nodes = nodes
         self.stack = stack  # stack of node indices; top is current parent
+        self.diag = diag
         self._in_style = False   # True while inside <style>...</style>
         self._in_script = False  # True while inside <script>...</script>
         self._style_chunks = []  # CSS text collected from <style> blocks
@@ -100,17 +101,17 @@ class _Builder(HTMLParser):
         node = Node(BOX, parent_idx)
         attr_dict = dict(attrs)
         style = attr_dict.get("style", "")
-        props = parse_style(style)
+        props = parse_style(style, self.diag)
         node.x = props.get("left", 0)
         node.y = props.get("top", 0)
         node.w = props.get("width", 0)
         node.h = props.get("height", 0)
         if "background-color" in props:
-            node.bg = to_rgb565(props["background-color"])
+            node.bg = to_rgb565(props["background-color"], self.diag)
         if "color" in props:
-            node.fg = to_rgb565(props["color"])
+            node.fg = to_rgb565(props["color"], self.diag)
         node.font_size = props.get("font-size", 8)
-        node.anim = _parse_anim(attr_dict)  # Phase-1 data-anim (wins if present)
+        node.anim = _parse_anim(attr_dict, self.diag)  # Phase-1 data-anim (wins if present)
         # Parse data-tap: store tap id (1..255) or 0 if absent/invalid/out-of-range
         try:
             tap_val = int(attr_dict.get("data-tap", "0"))
@@ -219,13 +220,13 @@ def _parse_timing_function_from_style(style):
     return None
 
 
-def parse_html(html, screen_w, screen_h):
+def parse_html(html, screen_w, screen_h, diag=None):
     screen = Node(SCREEN, ROOT_PARENT)
     screen.w = screen_w
     screen.h = screen_h
     nodes = [screen]
     stack = [0]
-    builder = _Builder(nodes, stack)
+    builder = _Builder(nodes, stack, diag)
     builder.feed(html)
     builder.resolve_css_anims()
     return nodes

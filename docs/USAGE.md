@@ -10,9 +10,11 @@ something, this document says so explicitly — a feature you think is supported
 silent-failure trap.
 
 > **Honesty contract.** HTGL implements a *deliberately tiny* subset. If a CSS construct is not
-> in the supported table below, the transpiler **drops it without warning** (there is no warnings
-> channel yet). Always preview the rendered `.uib`/PNG, not just the source `.html` in a browser —
-> the browser will show CSS the engine ignores.
+> in the supported table below, the transpiler **drops it — and now warns on stderr** when it does
+> (dropped units/properties, unrecognized colors, non-ASCII text, snapped font sizes, clamped
+> coordinates). Pass `--strict` to turn those warnings into a non-zero exit. Still preview the
+> rendered `.uib`/PNG, not just the source `.html` in a browser — the browser shows CSS the engine
+> ignores.
 
 ---
 
@@ -60,7 +62,7 @@ directory (so the `htgl` package is importable):
 
 ```sh
 cd tool
-python htgl.py <input.html> -o <output.uib> [--emit-c <file.c>] [--symbol <name>]
+python htgl.py <input.html> -o <output.uib> [--emit-c <file.c>] [--symbol <name>] [--strict]
 ```
 
 ### Arguments
@@ -71,9 +73,10 @@ python htgl.py <input.html> -o <output.uib> [--emit-c <file.c>] [--symbol <name>
 | `-o`, `--output` | **yes** | Path to the output `.uib` binary. Parent directories are created automatically. |
 | `--emit-c <file>` | no | Also write a C source file containing the blob as a `const unsigned char[]` array (compile-time embedding mode). Parent directories are created automatically. |
 | `--symbol <name>` | no | Base name for the C array symbols. Defaults to the **stem of the `--emit-c` filename**. Ignored when `--emit-c` is absent. |
+| `--strict` | no | Treat transpiler warnings (dropped CSS, unrecognized color, non-ASCII text, clamped coordinate, snapped font size) as errors: print them and **exit non-zero**. |
 
-`-o/--output` is **mandatory** — there is no stdout mode. There are no other flags (no verbosity,
-no screen-size override, no strict mode).
+`-o/--output` is **mandatory** — there is no stdout mode. Warnings always print to **stderr**;
+`--strict` makes them fail the build. There is no verbosity flag and no screen-size override.
 
 ### Generated C symbols
 
@@ -101,9 +104,9 @@ first div has no positive width/height, the screen defaults to **240 × 320**
 
 ### Exit status
 
-`main()` returns `0` on success. Malformed input that the `html.parser` tolerates will still
-produce a blob (the parser is lenient); a missing input file raises a Python exception
-(non-zero exit). There is no validation-error reporting beyond Python tracebacks.
+`main()` returns `0` on success (warnings alone do **not** fail unless `--strict` is set, in which
+case it returns `1`). Malformed input that the `html.parser` tolerates still produces a blob (the
+parser is lenient); a missing input file raises a Python exception (non-zero exit).
 
 ---
 
@@ -150,18 +153,16 @@ Layout is **absolute only**: every box is positioned relative to its parent box'
 | `data-anim` / CSS `animation` | ✅ | See [§6](#6-animation). |
 | `data-tap` | ✅ | See [§7](#7-touch--tap-input). |
 
-> **The drop is silent.** `css.parse_style` only keeps a whitelist of properties
+> **Drops are warned.** `css.parse_style` keeps only a whitelist of properties
 > (`left/top/width/height/font-size` as px; `position/background-color/color` as strings); every
-> other declaration is discarded with no diagnostic (`css.py:_PX_PROPS`, `_STR_PROPS`). A
-> non-px unit on a px property returns `None` and the property is simply not set
-> (`css.py:_to_px`).
+> other declaration is discarded **with a warning**, and a non-px unit on a px property is dropped
+> **with a warning** too (`css.py`). Run the CLI and read stderr, or use `--strict` to fail on them.
 
 ### Coordinate range
 
-Geometry is stored as **signed 16-bit** (`int16_t x,y,w,h` in the node struct, `uib.NODE_FMT`
-field `h`). Values must fit `[-32768, 32767]`. A coordinate above `32767` currently raises an
-uncaught `struct.error` in the transpiler (it is **not** clamped). Keep coordinates within a
-realistic screen range.
+Geometry is stored as **signed 16-bit** (`int16_t x,y,w,h` in the node struct, `uib.NODE_FMT`).
+Values outside `[-32768, 32767]` are **clamped, with a warning** — a coordinate like
+`width:400000px` no longer crashes the tool. Keep coordinates within a realistic screen range.
 
 ---
 
@@ -177,7 +178,8 @@ Colors apply to `background-color` (box fill) and `color` (text). They are parse
 | `#rgb` (3 hex) | `#f50` | Expanded to `#ff5500`, packed to RGB565. |
 | `#rrggbb` (6 hex) | `#202840` | Packed to RGB565. |
 | Named color (whitelist) | `red`, `navy` | From the 13-entry table below. |
-| **Anything else** | `rgb(255,0,0)`, `hsl(...)`, `tomato`, `#1234` | ⚠️ **Silently becomes black (`0x0000`).** |
+| `rgb()` / `rgba()` | `rgb(255,0,0)`, `rgba(0,0,255,.5)` | Parsed to RGB565 (**alpha ignored**, with a warning). |
+| **Anything else** | `hsl(...)`, `tomato`, `#1234` | Becomes black (`0x0000`) **with a warning**. |
 
 **The complete named-color whitelist** (`colors._NAMED`) — these are the **only** names that work:
 
@@ -189,10 +191,10 @@ yellow cyan   magenta  silver  navy
 (`gray` and `grey` are aliases → 13 keys, 12 distinct colors.) Note `green` is the CSS
 half-intensity `#008000`; use `lime` for full-bright `#00ff00`.
 
-> **Silent black trap.** Any color HTGL can't parse — including the valid CSS functions
-> `rgb()`/`rgba()`, any unlisted named color like `orange`, or a malformed hex — returns
-> `0x0000` (black) with no warning (`colors.to_rgb565` final `return 0x0000`, and the `ValueError`
-> branches in hex parsing). If a box renders black, suspect an unsupported color first.
+> **Black-fallback (now warned).** `rgb()`/`rgba()` are parsed (alpha dropped). Any color HTGL
+> still can't parse — an unlisted named color like `orange`, an `hsl(...)`, or a malformed hex —
+> returns `0x0000` (black) **and emits a warning**. If a box renders black, check the transpiler
+> warnings (or just use `#rrggbb`).
 
 RGB565 packing drops the low bits of each channel (5-6-5), so expect mild banding on gradients of
 near colors — this is inherent to the 16-bit panel format, not a bug.

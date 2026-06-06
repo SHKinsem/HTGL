@@ -1,8 +1,10 @@
 """argparse CLI: .html -> .uib (+ optional C array)."""
 
 import argparse
+import sys
 from pathlib import Path
 
+from .diagnostics import Diagnostics
 from .html_tree import parse_html, BOX
 from .uib import build_uib
 from .emitc import emit_c_array
@@ -23,12 +25,15 @@ def main(argv=None):
     p.add_argument("-o", "--output", required=True, help="output .uib file")
     p.add_argument("--emit-c", dest="emit_c", help="also write a C array file")
     p.add_argument("--symbol", default=None, help="C symbol base name")
+    p.add_argument("--strict", action="store_true",
+                   help="treat transpiler warnings as errors (non-zero exit)")
     args = p.parse_args(argv)
 
     html = Path(args.input).read_text(encoding="utf-8")
     w, h = _infer_screen_size(html)
-    nodes = parse_html(html, w, h)
-    blob = build_uib(nodes, w, h)
+    diag = Diagnostics()
+    nodes = parse_html(html, w, h, diag)
+    blob = build_uib(nodes, w, h, diag)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -39,4 +44,11 @@ def main(argv=None):
         cpath = Path(args.emit_c)
         cpath.parent.mkdir(parents=True, exist_ok=True)
         cpath.write_text(emit_c_array(blob, symbol), encoding="ascii")
+
+    for message in diag.warnings:
+        print("htgl: warning: " + message, file=sys.stderr)
+    if args.strict and diag.warnings:
+        print("htgl: %d warning(s) and --strict is set -> failing" % len(diag.warnings),
+              file=sys.stderr)
+        return 1
     return 0
