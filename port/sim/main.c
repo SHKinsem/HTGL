@@ -77,9 +77,11 @@ int main(int argc, char **argv) {
         free(blob); return 1;
     }
     const char *prefix = argv[2];
-    /* Build path buffer: prefix + up to 7 digits + ".png" + NUL */
+    /* Build path buffer: prefix + up to a full int's digits (<=11) + ".png" + NUL.
+       Sized and written with snprintf so an absurd `frames` truncates, never overflows. */
     int prefix_len = (int)strlen(prefix);
-    char *path_buf = (char *)malloc((size_t)(prefix_len + 12));
+    size_t path_cap = (size_t)prefix_len + 16;
+    char *path_buf = (char *)malloc(path_cap);
     if (!path_buf) { free(blob); return 1; }
 
     int written = 0;
@@ -97,7 +99,7 @@ int main(int argc, char **argv) {
         htgl_layout(&ctx);
         htgl_render(&ctx);
 
-        sprintf(path_buf, "%s%03d.png", prefix, i);
+        snprintf(path_buf, path_cap, "%s%03d.png", prefix, i);
         int wrc = hal_png_write(path_buf);
         hal_png_end();
         if (wrc != 0) {
