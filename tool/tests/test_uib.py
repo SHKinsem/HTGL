@@ -1,12 +1,9 @@
 import struct
 
 from htgl.html_tree import parse_html
-from htgl.uib import build_uib
-
-HEADER_FMT = "<4sBBHHHHH"
-NODE_FMT = "<BBHhhhhHHH"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)  # 16
-NODE_SIZE = struct.calcsize(NODE_FMT)      # 18
+# Pull the format strings from the emitter (single source of truth) rather than
+# redefining them here, so a NODE_FMT/HEADER_FMT change can't silently drift.
+from htgl.uib import build_uib, HEADER_FMT, NODE_FMT, HEADER_SIZE, NODE_SIZE
 
 def test_header_fields():
     nodes = parse_html('<div></div>', 240, 320)

@@ -136,6 +136,16 @@ void htgl_render(htgl_ctx *c);          // 分块渲染 + 调 hal->flush
 - **CSS 属性表**：转译器侧 `属性名 → 解析/落盘` 映射表，加属性不动主流程。
 - **HAL**：加新显示屏/平台 = 实现 `flush`。
 
+> **实现现状（截至 2026-06-06）**：上面的"函数指针注册表"是早期设想；当前 ~2300 行
+> 规模下刻意用 **switch + 白名单**（3 种节点类型不值得引入注册机）。贡献者实际改动点：
+> - **加节点类型**：`engine/htgl.c` `htgl_render` 的 switch + 加载期类型校验(`-14`) +
+>   `tool/htgl/html_tree.py` 标签分发 + `tool/htgl/uib.py` 打包。
+> - **加可动画属性**：`engine/htgl.c` `htgl_tick` 的 switch + `uib.py._ANIM_PROP` +
+>   `html_tree.py._ANIM_PROPS` + `cssanim.py._CSS_PROP_MAP`（漏改任一处，加载期 `-15` 会报错而非静默）。
+> - **加 CSS 属性**：`css.py` 白名单 + `html_tree.py` 落到 Node 字段（可能触发格式/版本升级）。
+> - **HAL** 仍是唯一真正干净的接缝：只实现一个 `flush(x,y,w,h,rgb565)`，引擎不变。
+> 当类型/属性数量增长到值得时，再引入真正的注册表。完整贡献者指南见 `docs/USAGE.md`。
+
 ---
 
 ## 6. 转译器（`tool/htgl.py`，Python 3）
