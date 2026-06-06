@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: transpiler + engine + e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      # Transpiler unit tests. pyproject.toml sets testpaths=tool/tests and
+      # pythonpath=tool, so this runs from the repo root.
+      - name: Transpiler tests (pytest)
+        run: python -m pytest -q
+
+      - name: Build engine + simulator
+        run: cmake -S . -B build && cmake --build build
+
+      # Engine unit tests + the byte-exact end-to-end golden compare
+      # (transpile examples/hello.html -> .uib -> PNG, cmp against tests/*.golden).
+      - name: Engine + e2e tests (ctest)
+        run: ctest --test-dir build --output-on-failure
