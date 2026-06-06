@@ -174,10 +174,11 @@ A flat, little-endian, zero-copy layout. Compile-time and runtime loading share 
 |---|---|---|
 | **Header** | 16 B | magic `HTGL`, version, node count, screen W/H, string-table offset, anim count |
 | **Node[]** | 18 B each | type (`SCREEN`/`BOX`/`TEXT`), parent index, x/y/w/h, bg/fg (RGB565), font scale, text ref |
-| **Anim[]** | 10 B each | node index, prop (x/y/w/h), mode (loop + easing, packed), from/to, duration (ms) |
+| **Anim[]** | 10 B each | node index, prop (x/y/w/h/bg), mode (loop + easing, packed), from/to, duration (ms) |
 | **String table** | var | length-prefixed ASCII for text nodes |
+| **CRC32 trailer** | 4 B (optional) | present iff header `flags` bit 0 (`--crc`); little-endian CRC32 over all preceding bytes, verified on load |
 
-Animation-free blobs carry `anim count = 0` and an empty `Anim[]`, so they stay byte-identical to the original format.
+Animation-free blobs carry `anim count = 0` and an empty `Anim[]`, and CRC is opt-in (`flags = 0`), so a plain blob stays byte-identical to the original format. Full field-level reference: [`docs/USAGE.md`](docs/USAGE.md#14-the-uib-binary-format).
 
 ## Prerequisites
 
