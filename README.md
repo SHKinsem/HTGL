@@ -30,7 +30,7 @@ with a tiny portable C99 engine. The same `.html` previews in any browser.
 ## Why HTGL
 
 - 🎨 **Author in HTML/CSS** — a subset everyone already knows, and you can open the file in a browser to preview it.
-- 🪶 **Tiny & portable** — the engine is pure **C99** with **no mandatory heap** and a chunked renderer that never needs a full framebuffer, so it fits low-end MCUs (e.g. STM32F1, tens of KB RAM, no FPU).
+- 🪶 **Tiny & portable** — the engine is pure **C99** with **no mandatory heap** and a chunked renderer that never needs a full framebuffer, so it fits low-end MCUs (e.g. STM32F1, tens of KB RAM, no FPU). [Measured](#footprint--does-it-really-fit-a-low-end-mcu): **~2.6 KB flash + ~4 KB RAM** cross-compiled for Cortex-M3.
 - 🔌 **HAL-decoupled** — the engine is platform-agnostic; only a `flush()` callback differs between the PC simulator and real hardware.
 - 📦 **One binary, two ways to load** — the transpiler emits a compact `.uib` that you can either `#include` as a C array (zero runtime parsing) **or** load at runtime from SD/OTA (swap the UI without reflashing).
 - 🎬 **Animation** — declare motion with `data-anim` and the engine interpolates it on a `htgl_tick(now_ms)` call (integer math, no FPU). CSS `@keyframes` support is on the way.
@@ -142,6 +142,28 @@ pio run -d port/esp32 -t upload  # flash, then: pio device monitor
 ```
 
 Porting to another MCU/display = implement one `flush(x,y,w,h,rgb565)`; the engine is unchanged.
+
+## Footprint — does it really fit a low-end MCU?
+
+The engine is platform-independent C99, so we can cross-compile it for the thesis target
+(**STM32F1 = Cortex-M3**) and *measure* — no hardware needed. Reproduce with
+[`scripts/measure_footprint.sh`](scripts/measure_footprint.sh) (needs `arm-none-eabi-gcc`):
+
+```sh
+sh scripts/measure_footprint.sh        # defaults to cortex-m3
+```
+
+| What | Size | Where |
+|---|---:|---|
+| Engine code + 8×8 font (`htgl.c` + `draw.c`) | **2.6 KB** | flash (`.text` / `.rodata`) |
+| Engine static RAM | **0 B** | — (no global state) |
+| Per-UI context (`htgl_ctx`, `HTGL_MAX_NODES=256`) | **3.6 KB** | RAM (`.bss`, caller-allocated) |
+| Line buffer (caller-owned) | `screen_w × rows × 2 B` | RAM — e.g. 240×1 row = **480 B** |
+
+Measured with `arm-none-eabi-gcc 13.3.0 -mcpu=cortex-m3 -Os`. A 240-px-wide UI needs
+**~2.6 KB flash + ~4 KB RAM** total — about 20 % of an STM32F103's 20 KB SRAM, leaving the
+rest for your application. The font is `const` (lives in flash, not RAM); per-context RAM
+scales with `HTGL_MAX_NODES` and can be lowered for tighter parts.
 
 ## The `.uib` binary format
 
