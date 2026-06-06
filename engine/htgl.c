@@ -22,6 +22,10 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     if (h->strtab_off > len) return -6;
     /* screen dims must be non-zero (render computes band_h = line_buf_px/screen_w). */
     if (h->screen_w == 0 || h->screen_h == 0) return -7;
+    /* The caller's line buffer must hold at least one full screen row, else
+       htgl_render's band-clear writes screen_w words past its end. screen_w is
+       blob-controlled, so this is an untrusted-input bound, not just a contract. */
+    if (ctx->line_buf_px < (int)h->screen_w) return -12;
     /* string table must come after the node array (and anim table). */
     int anims_end = nodes_end + (int)sizeof(htgl_anim) * (int)h->anim_count;
     if (h->strtab_off < anims_end) return -8;
@@ -38,6 +42,20 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     if (anims_end > len) return -10;
     for (int i = 0; i < (int)h->anim_count; i++) {
         if (anims[i].node_idx >= (uint16_t)h->node_count) return -11;
+    }
+    /* validate every referenced string stays inside the blob: node_text() reads
+       a length byte at strtab+text_ref then that many bytes, both of which a
+       malicious .uib could push out of bounds (OOB read -> rasterized glyphs).
+       Check the length-byte read is itself in-bounds before dereferencing it. */
+    for (int i = 0; i < h->node_count; i++) {
+        /* only TEXT nodes are ever dereferenced via node_text(); a stray
+           text_ref on any other node type is never read, so don't reject it. */
+        if (nodes[i].type != HTGL_TYPE_TEXT) continue;
+        uint16_t tref = nodes[i].text_ref;
+        if (tref == HTGL_NO_TEXT) continue;
+        int off = (int)h->strtab_off + (int)tref;
+        if (off >= len) return -13;                      /* length byte itself OOB */
+        if (off + 1 + (int)blob[off] > len) return -13;  /* string body OOB */
     }
 
     ctx->blob = blob;
