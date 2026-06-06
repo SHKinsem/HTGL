@@ -44,5 +44,7 @@ nodes = [
 
 if len(sys.argv) < 2:
     sys.exit("usage: gen_anim_uib.py <out.uib>")
+# Emit WITH the CRC32 trailer so the C probe's successful load also proves the
+# Python zlib.crc32 and the engine's htgl_crc32 agree on real bytes.
 with open(sys.argv[1], "wb") as f:
-    f.write(build_uib(nodes, 240, 200))
+    f.write(build_uib(nodes, 240, 200, crc=True))

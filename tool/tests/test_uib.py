@@ -48,3 +48,19 @@ def test_text_font_scale_byte():
     off = HEADER_SIZE + NODE_SIZE * 2  # text node
     rec = struct.unpack_from(NODE_FMT, blob, off)
     assert rec[1] == 2  # font byte = scale = 16/8
+
+
+def test_crc_trailer_optional_and_matches_zlib():
+    import zlib
+    nodes = parse_html('<div style="width:10px;height:10px"></div>', 100, 100)
+    crc_blob = build_uib(nodes, 100, 100, crc=True)
+    assert crc_blob[5] & 0x01                       # flags bit 0 set
+    want = struct.unpack_from("<I", crc_blob, len(crc_blob) - 4)[0]
+    assert want == zlib.crc32(crc_blob[:-4]) & 0xFFFFFFFF
+    # default: no trailer, flags 0, byte-identical to the pre-CRC format
+    plain = build_uib(nodes, 100, 100)
+    assert plain[5] == 0
+    assert len(crc_blob) == len(plain) + 4
+    # the two differ only in the flags byte (5) and the appended trailer
+    assert crc_blob[:5] == plain[:5]
+    assert crc_blob[6:len(plain)] == plain[6:]

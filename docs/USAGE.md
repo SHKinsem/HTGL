@@ -62,7 +62,7 @@ directory (so the `htgl` package is importable):
 
 ```sh
 cd tool
-python htgl.py <input.html> -o <output.uib> [--emit-c <file.c>] [--symbol <name>] [--strict]
+python htgl.py <input.html> -o <output.uib> [--emit-c <file.c>] [--symbol <name>] [--strict] [--crc]
 ```
 
 ### Arguments
@@ -74,6 +74,7 @@ python htgl.py <input.html> -o <output.uib> [--emit-c <file.c>] [--symbol <name>
 | `--emit-c <file>` | no | Also write a C source file containing the blob as a `const unsigned char[]` array (compile-time embedding mode). Parent directories are created automatically. |
 | `--symbol <name>` | no | Base name for the C array symbols. Defaults to the **stem of the `--emit-c` filename**. Ignored when `--emit-c` is absent. |
 | `--strict` | no | Treat transpiler warnings (dropped CSS, unrecognized color, non-ASCII text, clamped coordinate, snapped font size) as errors: print them and **exit non-zero**. |
+| `--crc` | no | Append a 4-byte CRC32 integrity trailer (sets header `flags` bit 0). The engine verifies it on load and rejects a corrupted blob (`-16`). Off by default → byte-identical to the pre-CRC format. |
 
 `-o/--output` is **mandatory** — there is no stdout mode. Warnings always print to **stderr**;
 `--strict` makes them fail the build. There is no verbosity flag and no screen-size override.
@@ -446,6 +447,7 @@ fully validates an untrusted blob and returns the **first** failure it finds:
 | `-13` | A TEXT node's `text_ref` (or its length-prefixed string body) lies outside the blob. |
 | `-14` | A node has an unknown `type` (`> HTGL_TYPE_TEXT`). The renderer has no handler for it, so it is rejected rather than silently drawn as nothing. |
 | `-15` | An anim record has an unknown `prop` (`> 4`). `htgl_tick` has no case for it, so it is rejected rather than silently animating nothing. |
+| `-16` | The header's CRC32 flag (`flags` bit 0) is set but the trailing CRC doesn't match the blob (corrupted / truncated / half-written), or the blob is too short to hold the 4-byte trailer. |
 
 On any non-zero code the context is reset to a clean **not-loaded** state: `htgl_screen_w/h`
 return `0` and `htgl_render` is a safe no-op. A *failed reload* therefore also clears the
@@ -490,6 +492,11 @@ UI without reflashing.
   from SD/OTA returns a negative code instead of reading out of bounds. The renderer (`draw.c`)
   additionally **clips all geometry** to the band, so even in-bounds-but-absurd coordinates can't
   scribble outside the line buffer.
+- **Integrity (optional, recommended for SD/OTA).** Transpile with `--crc` to append a CRC32
+  trailer; the loader verifies it *before anything else* and returns `-16` on mismatch. The
+  bounds-checks above reject *malformed* blobs; the CRC additionally catches *silent corruption* —
+  bit-rot or a half-finished OTA write that would still pass the structural checks. Off by default
+  (legacy blobs have `flags=0` and skip it).
 - **The blob is borrowed, not copied.** `htgl_load` is zero-copy: it stores pointers into your
   buffer. **The blob memory must remain valid for the entire lifetime of the context** (don't free
   the SD read buffer while the UI is live; a `const` flash array is ideal).
@@ -618,9 +625,10 @@ bytes. Section order: **Header · Node[] · Anim[] · String table**.
 | **Node[]** | 18 B each | `type` (SCREEN/BOX/TEXT), `font` byte (TEXT: scale; BOX: tap id), `parent` index, `x`/`y`/`w`/`h` (int16), `bg`/`fg` (RGB565), `text_ref`. |
 | **Anim[]** | 10 B each | `node_idx`, `prop` (0=x 1=y 2=w 3=h 4=bg), `mode` byte (`loop = mode & 0x0F`, `ease = (mode >> 4) & 0x0F`), `from`/`to` (int16; for `bg`, the RGB565 value reinterpreted as int16), `dur_ms`. |
 | **String table** | variable | length-prefixed ASCII (1-byte length + bytes), one entry per TEXT node, ≤ 255 bytes each. |
+| **CRC32 trailer** | 4 B (optional) | Present **iff** header `flags` bit 0 is set (`--crc`). Little-endian CRC32 (IEEE/zlib, poly `0xEDB88320`) over **all** preceding bytes; verified on load (`-16` on mismatch). |
 
-Animation-free blobs carry `anim_count = 0` and an empty `Anim[]`, so they are byte-identical to
-the pre-animation format. The exact structs are in `engine/htgl_internal.h`
+Animation-free blobs carry `anim_count = 0` and an empty `Anim[]`, and CRC is opt-in (`flags = 0`),
+so a plain blob is byte-identical to the pre-animation format. The exact structs are in `engine/htgl_internal.h`
 (`htgl_header`/`htgl_node`/`htgl_anim`) and the `struct` formats in `tool/htgl/uib.py`
 (`HEADER_FMT`/`NODE_FMT`/`ANIM_FMT`).
 

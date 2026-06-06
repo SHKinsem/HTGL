@@ -11,6 +11,22 @@ htgl_ctx *htgl_init(htgl_ctx *ctx, const htgl_hal *hal,
     return ctx;
 }
 
+/* CRC-32 (IEEE / zlib: poly 0xEDB88320, reflected, init & final XOR with ~0).
+   Matches Python's zlib.crc32, so a trailer written by the tool verifies here.
+   Bitwise, no lookup table — load runs once, so we trade speed for 1 KB of flash. */
+static uint32_t htgl_crc32(const uint8_t *data, int len) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (int i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(crc & 1u)));
+    }
+    return ~crc;
+}
+
+/* test hook (CRC is otherwise internal) */
+uint32_t htgl_test_crc32(const uint8_t *data, int len) { return htgl_crc32(data, len); }
+
 int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     /* Clear any prior loaded view first, so that EVERY early-return below leaves
        the ctx in an honest "not loaded" state (hdr==NULL). Otherwise a failed
@@ -22,6 +38,20 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     const htgl_header *h = (const htgl_header *)blob;
     if (memcmp(h->magic, "HTGL", 4) != 0) return -2;
     if (h->version != 1) return -3;
+    /* Optional CRC32 trailer (flags bit 0): verify integrity BEFORE trusting any
+       field, then drop the 4 trailer bytes from every subsequent bound. Catches
+       silent corruption / a half-written OTA image that still passes the structural
+       checks below. Legacy blobs carry flags=0 and skip this entirely. */
+    if (h->flags & 0x01) {
+        if (len < (int)sizeof(htgl_header) + 4) return -16;
+        int dlen = len - 4;
+        uint32_t want = (uint32_t)blob[dlen]
+                      | ((uint32_t)blob[dlen + 1] << 8)
+                      | ((uint32_t)blob[dlen + 2] << 16)
+                      | ((uint32_t)blob[dlen + 3] << 24);
+        if (htgl_crc32(blob, dlen) != want) return -16;
+        len = dlen;
+    }
     if (h->node_count == 0 || h->node_count > HTGL_MAX_NODES) return -4;
     int nodes_end = (int)sizeof(htgl_header) + (int)sizeof(htgl_node) * h->node_count;
     if (nodes_end > len) return -5;

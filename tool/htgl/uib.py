@@ -6,6 +6,7 @@ then byte-identical to the original format). All little-endian.
 """
 
 import struct
+import zlib
 
 from .diagnostics import warn
 from .html_tree import TEXT
@@ -39,7 +40,7 @@ def _clamp_i16(v, diag, what):
     return v
 
 
-def build_uib(nodes, screen_w, screen_h, diag=None):
+def build_uib(nodes, screen_w, screen_h, diag=None, crc=False):
     count = len(nodes)
     anims = [(i, n.anim) for i, n in enumerate(nodes) if getattr(n, "anim", None)]
     anim_count = len(anims)
@@ -64,7 +65,7 @@ def build_uib(nodes, screen_w, screen_h, diag=None):
 
     out = bytearray()
     out += struct.pack(
-        HEADER_FMT, b"HTGL", VERSION, 0, count,
+        HEADER_FMT, b"HTGL", VERSION, (0x01 if crc else 0), count,
         screen_w, screen_h, strtab_off, anim_count,
     )
     for i, n in enumerate(nodes):
@@ -102,4 +103,8 @@ def build_uib(nodes, screen_w, screen_h, diag=None):
             mode_byte, frm, tov, a["dur"],
         )
     out += strtab
+    if crc:
+        # CRC32 over the whole blob (header with flags=1 + nodes + anims + strtab),
+        # appended as a little-endian u32 trailer. Verified by the engine on load.
+        out += struct.pack("<I", zlib.crc32(bytes(out)) & 0xFFFFFFFF)
     return bytes(out)

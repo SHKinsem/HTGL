@@ -27,13 +27,15 @@ def main(argv=None):
     p.add_argument("--symbol", default=None, help="C symbol base name")
     p.add_argument("--strict", action="store_true",
                    help="treat transpiler warnings as errors (non-zero exit)")
+    p.add_argument("--crc", action="store_true",
+                   help="append a CRC32 integrity trailer (verified by the engine on load)")
     args = p.parse_args(argv)
 
     html = Path(args.input).read_text(encoding="utf-8")
     w, h = _infer_screen_size(html)
     diag = Diagnostics()
     nodes = parse_html(html, w, h, diag)
-    blob = build_uib(nodes, w, h, diag)
+    blob = build_uib(nodes, w, h, diag, crc=args.crc)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
