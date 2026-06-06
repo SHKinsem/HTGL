@@ -1,0 +1,10 @@
+# Shell scripts must stay LF so `sh` runs them on Linux CI runners (a stray CR
+# breaks the shebang / `set -e`). Forced regardless of a contributor's autocrlf.
+*.sh text eol=lf
+
+# Binary test artifacts and assets — never apply end-of-line conversion, or the
+# byte-exact golden `cmp` in tests/test_e2e.sh would fail on a cross-platform checkout.
+*.golden binary
+*.uib    binary
+*.png    binary
+*.gif    binary

@@ -42,7 +42,14 @@ add_executable(test_touch tests/test_touch.c engine/htgl.c engine/draw.c)
 target_include_directories(test_touch PRIVATE engine tests)
 add_test(NAME touch COMMAND test_touch)
 
+# Cross-language anim conformance: loads a .uib emitted by the Python tool and
+# asserts the C engine decodes + interpolates it identically (the e2e golden has
+# no animations, so this is the only Python<->C check for the anim encoding).
+add_executable(htgl_anim_probe tests/anim_probe.c engine/htgl.c engine/draw.c)
+target_include_directories(htgl_anim_probe PRIVATE engine tests)
+
 find_program(SH_PROGRAM sh)
 if(SH_PROGRAM)
   add_test(NAME e2e COMMAND ${SH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/test_e2e.sh)
+  add_test(NAME anim_conformance COMMAND ${SH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/test_anim_conformance.sh)
 endif()

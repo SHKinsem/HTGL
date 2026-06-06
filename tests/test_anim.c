@@ -19,10 +19,10 @@
 #define SCREEN_H 200
 
 /* Build a blob with SCREEN + 1 BOX and one anim record.
-   anim: node_idx=1, prop, loop, from, to, dur_ms.
+   anim: node_idx=1, prop, mode, from, to, dur_ms.
    Returns total blob length written into `out`. */
 static int build_anim_blob(uint8_t *out, int out_size,
-                            uint8_t prop, uint8_t loop,
+                            uint8_t prop, uint8_t mode,
                             int16_t from, int16_t to, uint16_t dur_ms)
 {
     int nodes_end = (int)sizeof(htgl_header) + 2 * (int)sizeof(htgl_node);
@@ -44,7 +44,7 @@ static int build_anim_blob(uint8_t *out, int out_size,
     n[1].x = from; n[1].y = 0; n[1].w = 30; n[1].h = 30; n[1].bg = 0xF800;
 
     htgl_anim a;
-    a.node_idx = 1; a.prop = prop; a.loop = loop;
+    a.node_idx = 1; a.prop = prop; a.mode = mode;
     a.from = from; a.to = to; a.dur_ms = dur_ms;
 
     (void)out_size;
@@ -62,7 +62,7 @@ static int test_sizeof_anim(void) {
     /* field offsets */
     CHECK(offsetof(htgl_anim, node_idx) == 0);
     CHECK(offsetof(htgl_anim, prop)     == 2);
-    CHECK(offsetof(htgl_anim, loop)     == 3);
+    CHECK(offsetof(htgl_anim, mode)     == 3);
     CHECK(offsetof(htgl_anim, from)     == 4);
     CHECK(offsetof(htgl_anim, to)       == 6);
     CHECK(offsetof(htgl_anim, dur_ms)   == 8);
@@ -81,7 +81,7 @@ static int test_load_with_anim(void) {
     CHECK(ctx.anims != 0);
     CHECK(ctx.anims[0].node_idx == 1);
     CHECK(ctx.anims[0].prop     == 0);  /* x */
-    CHECK(ctx.anims[0].loop     == 0);  /* once */
+    CHECK(ctx.anims[0].mode     == 0);  /* once */
     CHECK(ctx.anims[0].from     == 10);
     CHECK(ctx.anims[0].to       == 200);
     CHECK(ctx.anims[0].dur_ms   == 1000);
@@ -460,7 +460,7 @@ static int test_tick_easing_loop_mode_preserved(void) {
 /* Build a blob with prop=4 (bg), signed-wrapping the RGB565 color as int16. */
 static int build_bg_anim_blob(uint8_t *out,
                                uint16_t from_rgb565, uint16_t to_rgb565,
-                               uint8_t loop, uint16_t dur_ms)
+                               uint8_t mode, uint16_t dur_ms)
 {
     int nodes_end = (int)sizeof(htgl_header) + 2 * (int)sizeof(htgl_node);
     int anims_end = nodes_end + (int)sizeof(htgl_anim);
@@ -486,7 +486,7 @@ static int build_bg_anim_blob(uint8_t *out,
     int16_t to16   = (int16_t)to_rgb565;
 
     htgl_anim a;
-    a.node_idx = 1; a.prop = 4 /*bg*/; a.loop = loop;
+    a.node_idx = 1; a.prop = 4 /*bg*/; a.mode = mode;
     a.from = from16; a.to = to16; a.dur_ms = dur_ms;
 
     memcpy(out, &h, sizeof(h));
@@ -614,6 +614,57 @@ static int test_bg_anim_does_not_touch_cur_xy(void) {
     return 0;
 }
 
+/* --------------------------------------------------- Phase F: branch coverage */
+
+static int test_tick_easing_ease_in_out_interior(void) {
+    /* ease-in-out has two sub-branches meeting at p=128; existing tests only hit
+       p=128 (t=500). Exercise p<128 (t=250) and p>=128 (t=750). once, 0..200. */
+    uint8_t blob[256];
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    int len = build_anim_blob(blob, sizeof(blob), 0, 0x30 /*ease-in-out once*/, 0, 200, 1000);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 250);                       /* p=64<128: p*p/128=32 -> 200*32/256=25 */
+    CHECK(ctx.cur_x[1] == 25);
+    htgl_tick(&ctx, 750);                       /* p=192>=128: 256-64*64/128=224 -> 175 */
+    CHECK(ctx.cur_x[1] == 175);
+    return 0;
+}
+
+static int test_tick_prop_y_and_h(void) {
+    /* prop=1 (y) and prop=3 (h) drive cur_y / cur_h (other tests only used x/w). */
+    uint8_t blob[256];
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+
+    int len = build_anim_blob(blob, sizeof(blob), 1 /*y*/, 0, 0, 100, 1000);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 500);                       /* linear p=128 -> 0+100*128/256=50 */
+    CHECK(ctx.cur_y[1] == 50);
+
+    len = build_anim_blob(blob, sizeof(blob), 3 /*h*/, 0, 100, 200, 1000);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_tick(&ctx, 500);                       /* 100+(200-100)*128/256=150 */
+    CHECK(ctx.cur_h[1] == 150);
+    return 0;
+}
+
+static int test_tick_dur_zero_no_crash(void) {
+    /* dur_ms==0 is blob-controlled; the guard must skip it (no divide-by-zero). */
+    uint8_t blob[256];
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    int len = build_anim_blob(blob, sizeof(blob), 0, 0, 10, 200, 0 /*dur=0*/);
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    CHECK(htgl_tick(&ctx, 500) == 0);           /* skipped: no change, no SIGFPE */
+    CHECK(ctx.cur_x[1] == 10);                  /* stays at init (n.x = from) */
+    return 0;
+}
+
 /* ------------------------------------------------------------------ main */
 
 int main(void) {
@@ -652,6 +703,11 @@ int main(void) {
     RUN(test_bg_anim_tick_midpoint);
     RUN(test_bg_anim_render_uses_cur_bg);
     RUN(test_bg_anim_does_not_touch_cur_xy);
+
+    /* Phase F — branch coverage */
+    RUN(test_tick_easing_ease_in_out_interior);
+    RUN(test_tick_prop_y_and_h);
+    RUN(test_tick_dur_zero_no_crash);
 
     if (fail == 0) printf("ok\n");
     return fail ? 1 : 0;
