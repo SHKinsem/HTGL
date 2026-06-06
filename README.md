@@ -33,7 +33,8 @@ with a tiny portable C99 engine. The same `.html` previews in any browser.
 - 🪶 **Tiny & portable** — the engine is pure **C99** with **no mandatory heap** and a chunked renderer that never needs a full framebuffer, so it fits low-end MCUs (e.g. STM32F1, tens of KB RAM, no FPU). [Measured](#footprint--does-it-really-fit-a-low-end-mcu): **~2.6 KB flash + ~4 KB RAM** cross-compiled for Cortex-M3.
 - 🔌 **HAL-decoupled** — the engine is platform-agnostic; only a `flush()` callback differs between the PC simulator and real hardware.
 - 📦 **One binary, two ways to load** — the transpiler emits a compact `.uib` that you can either `#include` as a C array (zero runtime parsing) **or** load at runtime from SD/OTA (swap the UI without reflashing).
-- 🎬 **Animation** — declare motion with `data-anim` and the engine interpolates it on a `htgl_tick(now_ms)` call (integer math, no FPU). CSS `@keyframes` support is on the way.
+- 🎬 **Animation** — declare motion with `data-anim` *or* CSS `@keyframes`/`animation` (they compile byte-identical), interpolated on a `htgl_tick(now_ms)` call with integer math (no FPU): position, size, and per-channel color, with easing curves.
+- 📖 **Documented** — a complete [usage reference](docs/USAGE.md) covers the exact supported subset (and its limits), every CLI flag, the full C API + `htgl_load` return codes, the memory-safety model, and a porting walkthrough.
 
 ## How it works
 
@@ -204,7 +205,7 @@ cmake -S . -B build && cmake --build build
 
 ```sh
 cd tool && python -m pytest      # transpiler (91 tests)
-ctest --test-dir build           # engine + end-to-end golden image (8 suites)
+ctest --test-dir build           # engine + golden e2e + Python↔C anim conformance (9 suites)
 ```
 
 ## Project structure
