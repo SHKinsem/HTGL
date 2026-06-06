@@ -103,10 +103,10 @@ int main(void) {
     uint8_t bad[128];
     memcpy(bad, blob, len);
     bad[0] = 'X';
-    CHECK(htgl_load(&ctx, bad, len) != 0);
+    CHECK(htgl_load(&ctx, bad, len) == -2);
 
     /* truncated rejected */
-    CHECK(htgl_load(&ctx, blob, 4) != 0);
+    CHECK(htgl_load(&ctx, blob, 4) == -1);
 
     /* (a) zero screen dimension rejected (else render divides by zero) */
     {
@@ -114,7 +114,7 @@ int main(void) {
         memcpy(z, blob, len);
         htgl_header *zh = (htgl_header *)z;
         zh->screen_w = 0;
-        CHECK(htgl_load(&ctx, z, len) != 0);
+        CHECK(htgl_load(&ctx, z, len) == -7);
     }
 
     /* (b) string table overlapping/before the node array rejected */
@@ -122,8 +122,8 @@ int main(void) {
         uint8_t s[128];
         memcpy(s, blob, len);
         htgl_header *sh = (htgl_header *)s;
-        sh->strtab_off = 0;            /* < nodes_end */
-        CHECK(htgl_load(&ctx, s, len) != 0);
+        sh->strtab_off = 0;            /* < anims_end */
+        CHECK(htgl_load(&ctx, s, len) == -8);
     }
 
     /* (c) out-of-range parent index rejected */
@@ -132,7 +132,7 @@ int main(void) {
         int plen = build_blob2(p);
         htgl_node *pn = (htgl_node *)(p + sizeof(htgl_header));
         pn[1].parent = 50;             /* >= node_count, would read OOB */
-        CHECK(htgl_load(&ctx, p, plen) != 0);
+        CHECK(htgl_load(&ctx, p, plen) == -9);
         /* sanity: the unmutated 2-node blob still loads */
         plen = build_blob2(p);
         CHECK(htgl_load(&ctx, p, plen) == 0);
@@ -145,7 +145,7 @@ int main(void) {
         CHECK(htgl_load(&ctx, t, tlen) == 0);              /* sanity: valid */
         htgl_node *tn = (htgl_node *)(t + sizeof(htgl_header));
         tn[1].text_ref = 50000;                            /* far past blob end */
-        CHECK(htgl_load(&ctx, t, tlen) != 0);
+        CHECK(htgl_load(&ctx, t, tlen) == -13);
     }
 
     /* (e) string length byte overrunning the blob rejected (OOB read guard) */
@@ -154,7 +154,7 @@ int main(void) {
         int tlen = build_blob3(t);
         htgl_header *th = (htgl_header *)t;
         t[th->strtab_off] = 200;       /* claims 200 chars; only 2 present */
-        CHECK(htgl_load(&ctx, t, tlen) != 0);
+        CHECK(htgl_load(&ctx, t, tlen) == -13);
     }
 
     /* (f) line buffer smaller than one screen row rejected (OOB write guard) */
@@ -163,7 +163,7 @@ int main(void) {
         htgl_ctx c2;
         CHECK(htgl_init(&c2, 0, small, 64) == &c2);
         /* `blob` is the 240-wide screen; a 64-px line buffer can't hold a row */
-        CHECK(htgl_load(&c2, blob, len) != 0);
+        CHECK(htgl_load(&c2, blob, len) == -12);
     }
 
     /* (g) boundary: line_buf_px == screen_w is exactly enough -> accepted */
@@ -181,7 +181,7 @@ int main(void) {
         CHECK(htgl_load(&ctx, t, tlen) == 0);              /* sanity: both valid */
         htgl_node *tn = (htgl_node *)(t + sizeof(htgl_header));
         tn[2].text_ref = 50000;                            /* second node OOB */
-        CHECK(htgl_load(&ctx, t, tlen) != 0);
+        CHECK(htgl_load(&ctx, t, tlen) == -13);
     }
 
     /* (i) a non-TEXT node's text_ref is never dereferenced, so it isn't validated */
@@ -200,6 +200,89 @@ int main(void) {
         htgl_node *tn = (htgl_node *)(t + sizeof(htgl_header));
         tn[1].text_ref = HTGL_NO_TEXT;
         CHECK(htgl_load(&ctx, t, tlen) == 0);
+    }
+
+    /* (k) unknown major version rejected */
+    {
+        uint8_t v[128]; memcpy(v, blob, len);
+        ((htgl_header *)v)->version = 2;
+        CHECK(htgl_load(&ctx, v, len) == -3);
+    }
+
+    /* (l) node_count of 0 or > HTGL_MAX_NODES rejected */
+    {
+        uint8_t v[128]; memcpy(v, blob, len);
+        ((htgl_header *)v)->node_count = 0;
+        CHECK(htgl_load(&ctx, v, len) == -4);
+        memcpy(v, blob, len);
+        ((htgl_header *)v)->node_count = 257;   /* > HTGL_MAX_NODES (256) */
+        CHECK(htgl_load(&ctx, v, len) == -4);
+    }
+
+    /* (m) node array extending past the blob rejected (memory-safety bound) */
+    {
+        uint8_t v[128]; memcpy(v, blob, len);
+        ((htgl_header *)v)->node_count = 10;    /* nodes_end = 16+180 > len */
+        CHECK(htgl_load(&ctx, v, len) == -5);
+    }
+
+    /* (n) string-table offset past the blob rejected */
+    {
+        uint8_t v[128]; memcpy(v, blob, len);
+        ((htgl_header *)v)->strtab_off = 60000;
+        CHECK(htgl_load(&ctx, v, len) == -6);
+    }
+
+    /* (o) zero screen_h rejected (the other half of -7) */
+    {
+        uint8_t v[128]; memcpy(v, blob, len);
+        ((htgl_header *)v)->screen_h = 0;
+        CHECK(htgl_load(&ctx, v, len) == -7);
+    }
+
+    /* (p) unknown node type rejected (render has no handler) */
+    {
+        uint8_t v[128];
+        int vl = build_blob2(v);
+        ((htgl_node *)(v + sizeof(htgl_header)))[1].type = 99;
+        CHECK(htgl_load(&ctx, v, vl) == -14);
+    }
+
+    /* (q) unknown animatable prop rejected (htgl_tick has no case) */
+    {
+        uint8_t v[128];
+        int ne = (int)(sizeof(htgl_header) + 2 * sizeof(htgl_node));
+        int ae = ne + (int)sizeof(htgl_anim);
+        htgl_header h2;
+        memcpy(h2.magic, "HTGL", 4); h2.version = 1; h2.flags = 0;
+        h2.node_count = 2; h2.screen_w = 100; h2.screen_h = 100;
+        h2.strtab_off = (uint16_t)ae; h2.anim_count = 1;
+        htgl_node nn[2]; memset(nn, 0, sizeof(nn));
+        nn[0].type = HTGL_TYPE_SCREEN; nn[0].parent = HTGL_ROOT_PARENT; nn[0].w = 100; nn[0].h = 100;
+        nn[1].type = HTGL_TYPE_BOX; nn[1].parent = 0; nn[1].w = 10; nn[1].h = 10;
+        htgl_anim aa; memset(&aa, 0, sizeof(aa));
+        aa.node_idx = 1; aa.prop = 99; aa.mode = 0; aa.from = 0; aa.to = 10; aa.dur_ms = 1000;
+        memcpy(v, &h2, sizeof(h2));
+        memcpy(v + sizeof(h2), nn, sizeof(nn));
+        memcpy(v + ne, &aa, sizeof(aa));
+        CHECK(htgl_load(&ctx, v, ae) == -15);
+        aa.prop = 0;                               /* sanity: a valid prop loads */
+        memcpy(v + ne, &aa, sizeof(aa));
+        CHECK(htgl_load(&ctx, v, ae) == 0);
+    }
+
+    /* (r) a FAILED reload clears state: screen dims read 0, render is a safe no-op */
+    {
+        htgl_ctx rc;
+        uint16_t rlb[240];
+        CHECK(htgl_init(&rc, 0, rlb, 240) == &rc);
+        CHECK(htgl_load(&rc, blob, len) == 0);
+        CHECK(htgl_screen_w(&rc) == 240);
+        uint8_t bad2[128]; memcpy(bad2, blob, len); bad2[0] = 'X';
+        CHECK(htgl_load(&rc, bad2, len) == -2);    /* failed reload */
+        CHECK(htgl_screen_w(&rc) == 0);            /* state cleared, not stale */
+        CHECK(htgl_screen_h(&rc) == 0);
+        htgl_render(&rc);                          /* hdr==NULL -> no-op (no hal deref) */
     }
 
     printf("ok\n");

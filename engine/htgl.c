@@ -12,6 +12,12 @@ htgl_ctx *htgl_init(htgl_ctx *ctx, const htgl_hal *hal,
 }
 
 int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
+    /* Clear any prior loaded view first, so that EVERY early-return below leaves
+       the ctx in an honest "not loaded" state (hdr==NULL). Otherwise a failed
+       reload would keep rendering the previous UI -- silent, and a use-after-free
+       on the SD/OTA reload path where the old blob's memory may be gone. */
+    ctx->hdr = 0; ctx->nodes = 0; ctx->anims = 0;
+    ctx->count = 0; ctx->anim_count = 0;
     if (len < (int)sizeof(htgl_header)) return -1;
     const htgl_header *h = (const htgl_header *)blob;
     if (memcmp(h->magic, "HTGL", 4) != 0) return -2;
@@ -26,22 +32,29 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
        htgl_render's band-clear writes screen_w words past its end. screen_w is
        blob-controlled, so this is an untrusted-input bound, not just a contract. */
     if (ctx->line_buf_px < (int)h->screen_w) return -12;
-    /* string table must come after the node array (and anim table). */
     int anims_end = nodes_end + (int)sizeof(htgl_anim) * (int)h->anim_count;
+    /* anim table must fit inside the blob (checked before -8 so it is reachable:
+       -8 forces strtab_off >= anims_end and -6 forces strtab_off <= len, which
+       together would otherwise make this implied and untestable). */
+    if (anims_end > len) return -10;
+    /* string table must come after the node array and the anim table. */
     if (h->strtab_off < anims_end) return -8;
     /* every node's parent must be the root sentinel or a strictly earlier node;
        this bounds abs_x[parent] and enforces the parent-before-child invariant
        that the single-pass layout relies on. */
     const htgl_node *nodes = (const htgl_node *)(blob + sizeof(htgl_header));
     for (int i = 0; i < h->node_count; i++) {
+        if (nodes[i].type > HTGL_TYPE_TEXT) return -14;   /* unknown node type: render
+                           has no handler for it, so reject rather than draw nothing. */
         uint16_t parent = nodes[i].parent;
         if (parent != HTGL_ROOT_PARENT && parent >= (uint16_t)i) return -9;
     }
-    /* validate anim table: each node_idx must be in range, and the table must fit. */
+    /* validate anim table: node_idx in range and prop known (size checked above). */
     const htgl_anim *anims = (const htgl_anim *)(blob + nodes_end);
-    if (anims_end > len) return -10;
     for (int i = 0; i < (int)h->anim_count; i++) {
         if (anims[i].node_idx >= (uint16_t)h->node_count) return -11;
+        if (anims[i].prop > 4) return -15;                /* unknown animatable prop:
+                           htgl_tick has no case for it, so reject rather than no-op. */
     }
     /* validate every referenced string stays inside the blob: node_text() reads
        a length byte at strtab+text_ref then that many bytes, both of which a
@@ -106,9 +119,9 @@ int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
         uint32_t dur = (uint32_t)a->dur_ms;
         if (dur == 0) continue;
 
-        /* The 'loop' field holds the mode byte: loop = mode & 0x0F, ease = (mode >> 4) & 0x0F. */
-        int loop = (int)(a->loop & 0x0F);
-        int ease = (int)((a->loop >> 4) & 0x0F);
+        /* mode packs both: loop = mode & 0x0F, ease = (mode >> 4) & 0x0F. */
+        int loop = (int)(a->mode & 0x0F);
+        int ease = (int)((a->mode >> 4) & 0x0F);
 
         /* Compute num/den for position fraction (integer arithmetic only). */
         uint32_t num, den;
@@ -238,6 +251,7 @@ void htgl_pointer_up(htgl_ctx *ctx, int x, int y) {
 }
 
 void htgl_render(htgl_ctx *ctx) {
+    if (!ctx->hdr) return;   /* not loaded, or a prior load failed: nothing to draw */
     int sw = ctx->hdr->screen_w;
     int sh = ctx->hdr->screen_h;
     int band_h = ctx->line_buf_px / sw;

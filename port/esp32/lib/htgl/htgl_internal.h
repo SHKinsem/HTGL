@@ -31,11 +31,15 @@ typedef struct {
     uint16_t text_ref;
 } htgl_node;
 
-/* prop: 0=x 1=y 2=w 3=h 4=bg.  loop: 0=once 1=loop 2=pingpong. */
+/* prop: 0=x 1=y 2=w 3=h 4=bg.
+   mode byte packs two nibbles: loop = mode & 0x0F (0=once 1=loop 2=pingpong),
+   ease = (mode >> 4) & 0x0F (0=linear 1=ease-in 2=ease-out 3=ease-in-out).
+   For prop=4 (bg), from/to are RGB565 bit-patterns stored as signed int16
+   (values >= 0x8000 wrap negative), interpolated per channel. */
 typedef struct {
     uint16_t node_idx;
     uint8_t  prop;
-    uint8_t  loop;
+    uint8_t  mode;     /* loop | (ease << 4); see comment above */
     int16_t  from;
     int16_t  to;
     uint16_t dur_ms;
