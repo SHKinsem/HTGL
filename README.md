@@ -245,6 +245,12 @@ htgl/
 
 Design and per-milestone plans live under [`docs/superpowers/`](docs/superpowers/).
 
+## Contributing
+
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the dev setup, build/test
+commands, and the small set of sites you touch to add a widget, CSS property, animatable property,
+or display port.
+
 ## License
 
 [MIT](LICENSE) — free for commercial and embedded use.
