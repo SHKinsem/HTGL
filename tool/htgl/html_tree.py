@@ -17,6 +17,7 @@ from html.parser import HTMLParser
 from .colors import to_rgb565
 from .css import parse_style
 from .cssanim import parse_keyframes, parse_animation
+from .diagnostics import warn
 
 SCREEN = 0
 BOX = 1
@@ -165,20 +166,18 @@ class _Builder(HTMLParser):
         if not self._pending_anim:
             return
         css_text = "".join(self._style_chunks)
-        if not css_text.strip():
-            return
-        keyframes = parse_keyframes(css_text)
-        if not keyframes:
-            return
+        keyframes = parse_keyframes(css_text, self.diag) if css_text.strip() else {}
         for node_idx, raw_anim, timing_fn in self._pending_anim:
             node = self.nodes[node_idx]
             if node.anim is not None:
                 continue  # data-anim wins — skip
-            parsed = parse_animation(raw_anim, timing_function=timing_fn)
+            parsed = parse_animation(raw_anim, timing_function=timing_fn, diag=self.diag)
             if parsed is None:
-                continue
+                continue  # parse_animation already recorded a warning
             kf = keyframes.get(parsed["name"])
             if kf is None:
+                warn(self.diag, "animation references @keyframes '%s', which is missing "
+                     "or unsupported" % parsed["name"])
                 continue
             node.anim = {
                 "prop": kf["prop"],

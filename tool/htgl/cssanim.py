@@ -22,6 +22,7 @@ Returns None for any input that cannot be parsed within the subset.
 import re
 
 from .colors import to_rgb565
+from .diagnostics import warn
 
 # Properties we can animate and their HTGL axis codes
 _CSS_PROP_MAP = {
@@ -52,7 +53,7 @@ def _parse_px(value):
         return None
 
 
-def _parse_block_props(block_text):
+def _parse_block_props(block_text, diag=None):
     """Parse declarations inside a keyframe stop block, return {prop: value, ...}.
 
     Geometry properties (left/top/width/height) return int px values.
@@ -67,7 +68,7 @@ def _parse_block_props(block_text):
         raw = raw.strip()
         if name in _CSS_PROP_MAP:
             if name in _COLOR_PROPS:
-                val = to_rgb565(raw)
+                val = to_rgb565(raw, diag)
                 props[name] = val
             else:
                 val = _parse_px(raw)
@@ -103,11 +104,12 @@ def _extract_keyframe_bodies(css_text):
         pos = i + 1
 
 
-def parse_keyframes(css_text):
+def parse_keyframes(css_text, diag=None):
     """Parse all @keyframes rules in *css_text*.
 
     Returns a dict mapping animation name → {"prop": "x"|"y"|"w"|"h", "from": int, "to": int}.
-    Rules with no supported single-property mapping are silently skipped.
+    Rules that don't reduce to a single supported animated property are skipped, with
+    a warning recorded if `diag` is supplied.
     """
     css_text = _strip_comments(css_text)
     result = {}
@@ -128,9 +130,11 @@ def parse_keyframes(css_text):
                 key = "from"
             elif key == "100%":
                 key = "to"
-            stops[key] = _parse_block_props(sm.group(2))
+            stops[key] = _parse_block_props(sm.group(2), diag)
 
         if "from" not in stops or "to" not in stops:
+            warn(diag, "@keyframes '%s' ignored: needs both 'from' and 'to' (or 0%%/100%%)"
+                 % name)
             continue  # need both endpoints
 
         from_props = stops["from"]
@@ -139,6 +143,9 @@ def parse_keyframes(css_text):
         # Find a single shared supported property
         shared = set(from_props) & set(to_props) & set(_CSS_PROP_MAP)
         if len(shared) != 1:
+            warn(diag, "@keyframes '%s' ignored: HTGL animates exactly one of "
+                 "left/top/width/height/background-color per keyframe (found %d: %s)"
+                 % (name, len(shared), sorted(shared)))
             continue  # need exactly one animated property
 
         css_prop = next(iter(shared))
@@ -196,7 +203,7 @@ _CSS_TIMING_MAP = {
 }
 
 
-def parse_animation(value, timing_function=None):
+def parse_animation(value, timing_function=None, diag=None):
     """Parse an inline animation shorthand value.
 
     e.g. "slide 1s infinite alternate" or "bounce 500ms"
@@ -205,7 +212,8 @@ def parse_animation(value, timing_function=None):
     If None, timing keywords embedded in the shorthand are used; default is "linear".
 
     Returns {"name": str, "dur": int_ms, "loop": "once"|"loop"|"pingpong",
-             "ease": "linear"|"ease-in"|"ease-out"|"ease-in-out"} or None.
+             "ease": "linear"|"ease-in"|"ease-out"|"ease-in-out"} or None. A value that
+    can't be parsed within the subset records a warning if `diag` is supplied.
     """
     if not value:
         return None
@@ -264,6 +272,8 @@ def parse_animation(value, timing_function=None):
             name = token  # preserve original case
 
     if name is None or dur is None:
+        warn(diag, "animation '%s' ignored: needs an @keyframes name and a duration "
+             "(e.g. 'slide 1s')" % value.strip())
         return None
 
     # Resolve loop mode

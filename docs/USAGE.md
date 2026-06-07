@@ -281,7 +281,7 @@ CSS-subset rules (`cssanim.py`):
 
 - `@keyframes <name> { from { … } to { … } }` — `0%`/`100%` are accepted as aliases for
   `from`/`to`. **Exactly one** animated property may appear, and it must be present in **both**
-  `from` and `to` (otherwise the keyframe is silently skipped).
+  `from` and `to` (otherwise the keyframe is skipped **with a warning**).
 - Property map: `left→x`, `top→y`, `width→w`, `height→h`, `background-color→bg`. Geometry
   values are px integers; `background-color` uses [§4](#4-colors) parsing.
 - `animation:` shorthand — `name`, a duration (`1s`→1000ms, `500ms`→500), optional
@@ -291,8 +291,8 @@ CSS-subset rules (`cssanim.py`):
     neither → **once**.
   - timing keyword (or a separate `animation-timing-function`) maps `ease`→`ease-in-out`,
     and `linear`/`ease-in`/`ease-out`/`ease-in-out` to themselves.
-- Anything the shorthand can't resolve (missing name or duration, unknown keyframe) → no animation
-  (returns `None`, silently).
+- Anything the shorthand can't resolve (missing name or duration, unknown keyframe) → no animation,
+  **with a warning** (e.g. `animation references @keyframes 'slide', which is missing or unsupported`).
 
 > **Precedence:** if a single element has **both** a `data-anim` attribute and a CSS `animation`,
 > the `data-anim` wins (`html_tree.resolve_css_anims` skips nodes that already have `node.anim`).

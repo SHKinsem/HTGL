@@ -6,6 +6,7 @@ import struct
 from htgl import cli
 from htgl.colors import to_rgb565
 from htgl.css import parse_style
+from htgl.cssanim import parse_keyframes, parse_animation
 from htgl.diagnostics import Diagnostics
 from htgl.html_tree import parse_html
 from htgl.uib import build_uib, NODE_FMT, HEADER_SIZE
@@ -118,3 +119,59 @@ def test_cli_strict_fails_on_warning(tmp_path):
     uib = tmp_path / "out.uib"
     assert cli.main([str(html), "-o", str(uib)]) == 0              # warnings don't fail by default
     assert cli.main([str(html), "-o", str(uib), "--strict"]) == 1  # --strict -> non-zero
+
+
+# --- CSS @keyframes / animation silent failures now warn ---
+
+def test_keyframes_missing_endpoint_warns():
+    d = Diagnostics()
+    parse_keyframes("@keyframes slide { from { left: 0px } }", d)   # no 'to'
+    assert any("slide" in w and "from" in w and "to" in w for w in d.warnings)
+
+
+def test_keyframes_two_properties_warns():
+    d = Diagnostics()
+    parse_keyframes("@keyframes m { from { left:0px; top:0px } to { left:9px; top:9px } }", d)
+    assert any("exactly one" in w for w in d.warnings)
+
+
+def test_keyframes_valid_no_warning():
+    d = Diagnostics()
+    kf = parse_keyframes("@keyframes slide { from { left: 0px } to { left: 100px } }", d)
+    assert d.warnings == []
+    assert kf["slide"]["prop"] == "x"
+
+
+def test_animation_missing_duration_warns():
+    d = Diagnostics()
+    assert parse_animation("slide", diag=d) is None
+    assert any("duration" in w for w in d.warnings)
+
+
+def test_animation_valid_no_warning():
+    d = Diagnostics()
+    parsed = parse_animation("slide 1s infinite alternate", diag=d)
+    assert d.warnings == []
+    assert parsed["loop"] == "pingpong"
+
+
+def test_css_animation_unknown_keyframes_warns():
+    # an `animation:` that references a @keyframes that doesn't exist -> warned, not silent
+    d = Diagnostics()
+    html = ('<div style="left:0;top:0;width:100px;height:100px">'
+            '<div style="left:0;top:0;width:10px;height:10px;animation: slide 1s infinite">'
+            '</div></div>')
+    parse_html(html, 100, 100, d)
+    assert any("slide" in w and "keyframes" in w for w in d.warnings)
+
+
+def test_css_animation_valid_sets_anim_no_warning():
+    d = Diagnostics()
+    html = ('<style>@keyframes slide { from { left: 0px } to { left: 100px } }</style>'
+            '<div style="left:0;top:0;width:100px;height:100px">'
+            '<div style="left:0;top:0;width:10px;height:10px;animation: slide 1s infinite">'
+            '</div></div>')
+    nodes = parse_html(html, 100, 100, d)
+    assert d.warnings == []
+    box = nodes[2]                       # screen(0), outer box(1), inner box(2)
+    assert box.anim is not None and box.anim["prop"] == "x"
