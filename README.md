@@ -253,4 +253,5 @@ or display port.
 
 ## License
 
-[MIT](LICENSE) — free for commercial and embedded use.
+[MIT](LICENSE) — free for commercial and embedded use. Vendored third-party headers (font8x8,
+stb_image_write) are public-domain / permissive; see [`THIRD_PARTY.md`](THIRD_PARTY.md).
