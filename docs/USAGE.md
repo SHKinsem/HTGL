@@ -149,7 +149,8 @@ Layout is **absolute only**: every box is positioned relative to its parent box'
 | flexbox / grid | ⛔ | Dropped. No layout effect. |
 | percentage / responsive layout | ⛔ | See `%` row above. |
 | images (`<img>`, `background-image`) | ⛔ | Not supported at all. |
-| text wrapping / multi-line | ⛔ | Text is a single line; long text overruns the box (then gets clipped at screen edges). |
+| multi-line via `<br>` | ✅ | `<br>` / `<br/>` inserts a line break; the engine renders the next line `8×scale` px down. |
+| automatic word-wrap | ⛔ | No reflow — a long single line overruns the box and is clipped at the screen edge. Use `<br>` for explicit breaks. |
 | multiple fonts / font-family | ⛔ | One built-in 8×8 bitmap font, scaled by integer factor only. |
 | `data-anim` / CSS `animation` | ✅ | See [§6](#6-animation). |
 | `data-tap` | ✅ | See [§7](#7-touch--tap-input). |
@@ -226,8 +227,12 @@ near colors — this is inherent to the 16-bit panel format, not a bug.
   this substitution, not a font bug.
 - Strings are **length-prefixed and capped at 255 bytes** (`uib.py` `[:255]`). Longer text is
   truncated.
-- Text does **not** wrap and has a **transparent background** (only foreground pixels are set);
-  it advances `8 × scale` px per character and is clipped at the band/screen edges.
+- Text does **not** auto-wrap and has a **transparent background** (only foreground pixels are
+  set); it advances `8 × scale` px per character and is clipped at the band/screen edges.
+- **Explicit line breaks:** a `<br>` (or `<br/>`) inserts a newline, and the engine renders the
+  following text one line (`8 × scale` px) down at the original left edge. Multiple text runs in the
+  same `<div>` (split by `<br>` or an ignored inline element) merge into a single TEXT node rather
+  than overlapping. There is still no automatic word wrapping.
 
 ---
 

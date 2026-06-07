@@ -39,3 +39,22 @@ def test_defaults_when_unstyled():
     box = [n for n in nodes if n.type == BOX][0]
     assert box.x == 0 and box.y == 0 and box.w == 0 and box.h == 0
     assert box.bg == 0x0000
+
+def test_br_makes_one_multiline_text_node():
+    nodes = parse_html('<div style="width:50px;height:50px">Line1<br>Line2</div>', 100, 100)
+    texts = [n for n in nodes if n.type == TEXT]
+    assert len(texts) == 1                 # merged, not two overlapping nodes
+    assert texts[0].text == "Line1\nLine2"
+
+def test_br_self_closing_and_repeated():
+    nodes = parse_html('<div>A<br/>B<br>C</div>', 100, 100)
+    texts = [n for n in nodes if n.type == TEXT]
+    assert len(texts) == 1
+    assert texts[0].text == "A\nB\nC"
+
+def test_inline_split_text_merges_with_space():
+    # an ignored inline element splits the text run; it merges into one node
+    nodes = parse_html('<div>foo <b>bar</b> baz</div>', 100, 100)
+    texts = [n for n in nodes if n.type == TEXT]
+    assert len(texts) == 1
+    assert texts[0].text == "foo bar baz"

@@ -82,6 +82,7 @@ class _Builder(HTMLParser):
         self.nodes = nodes
         self.stack = stack  # stack of node indices; top is current parent
         self.diag = diag
+        self._cur_text_node = None  # index of the open TEXT node for the current div, or None
         self._in_style = False   # True while inside <style>...</style>
         self._in_script = False  # True while inside <script>...</script>
         self._style_chunks = []  # CSS text collected from <style> blocks
@@ -95,6 +96,9 @@ class _Builder(HTMLParser):
             return
         if tag == "script":
             self._in_script = True
+            return
+        if tag == "br":
+            self._append_newline()   # <br> / <br/> -> line break within the current text
             return
         if tag != "div":
             return  # ignore unsupported tags, keep their children inline
@@ -122,6 +126,7 @@ class _Builder(HTMLParser):
         node_idx = len(self.nodes)
         self.nodes.append(node)
         self.stack.append(node_idx)
+        self._cur_text_node = None   # a new div starts a fresh text run
         # Collect raw animation value for Phase-2 resolution (done after feed())
         raw_anim = props.get("animation") or _parse_inline_animation_from_style(style)
         if raw_anim:
@@ -139,6 +144,22 @@ class _Builder(HTMLParser):
             return
         if len(self.stack) > 1:
             self.stack.pop()
+        self._cur_text_node = None   # text after a child div is a fresh run
+
+    def _append_newline(self):
+        """<br>: append a newline to the current div's open TEXT node, or start one."""
+        parent_idx = self.stack[-1]
+        cur = self._cur_text_node
+        if cur is not None and self.nodes[cur].parent == parent_idx:
+            self.nodes[cur].text += "\n"
+        else:
+            parent = self.nodes[parent_idx]
+            node = Node(TEXT, parent_idx)
+            node.text = "\n"
+            node.fg = parent.fg
+            node.font_size = parent.font_size
+            self.nodes.append(node)
+            self._cur_text_node = len(self.nodes) - 1
 
     def handle_data(self, data):
         # Suppress text inside <style> and <script> — do NOT create TEXT nodes for them.
@@ -151,12 +172,21 @@ class _Builder(HTMLParser):
         if not text:
             return
         parent_idx = self.stack[-1]
-        parent = self.nodes[parent_idx]
-        node = Node(TEXT, parent_idx)
-        node.text = text
-        node.fg = parent.fg
-        node.font_size = parent.font_size
-        self.nodes.append(node)
+        cur = self._cur_text_node
+        if cur is not None and self.nodes[cur].parent == parent_idx:
+            # Continue the open run (text after a <br> or an inline element): merge into
+            # one TEXT node instead of emitting a second node that would overlap it.
+            existing = self.nodes[cur].text
+            sep = "" if existing.endswith("\n") else " "
+            self.nodes[cur].text = existing + sep + text
+        else:
+            parent = self.nodes[parent_idx]
+            node = Node(TEXT, parent_idx)
+            node.text = text
+            node.fg = parent.fg
+            node.font_size = parent.font_size
+            self.nodes.append(node)
+            self._cur_text_node = len(self.nodes) - 1
 
     def resolve_css_anims(self):
         """Call after feed() to wire CSS @keyframes animations onto nodes.

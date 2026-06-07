@@ -36,8 +36,16 @@ void htgl_draw_text(uint16_t *band, int band_w, int band_y0, int band_h,
                     int tx, int ty, const char *text, int len,
                     int scale, uint16_t color) {
     int advance = 8 * scale;
+    int cx = tx, cy = ty;
     for (int i = 0; i < len; i++) {
+        char c = text[i];
+        if (c == '\n') {            /* line break: carriage-return + one line down */
+            cx = tx;
+            cy += advance;
+            continue;
+        }
         draw_glyph(band, band_w, band_y0, band_h,
-                   tx + i * advance, ty, (unsigned char)text[i], scale, color);
+                   cx, cy, (unsigned char)c, scale, color);
+        cx += advance;
     }
 }

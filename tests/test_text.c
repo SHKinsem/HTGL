@@ -48,6 +48,38 @@ int main(void) {
         for (int x = 0; x < 16; x++)
             if (fb[y * W + x] == 0xFFFF) found_low = 1;
     CHECK(found_low == 1);
+
+    /* --- multi-line: '\n' drops to the next line (scale 1, text "A\nB") --- */
+    {
+        uint8_t b2[256];
+        htgl_header hd; memcpy(hd.magic, "HTGL", 4);
+        hd.version = 1; hd.flags = 0; hd.node_count = 2;
+        hd.screen_w = W; hd.screen_h = H;
+        hd.strtab_off = sizeof(htgl_header) + 2 * sizeof(htgl_node);
+        hd.anim_count = 0;
+        htgl_node n2[2]; memset(n2, 0, sizeof(n2));
+        n2[0].type = HTGL_TYPE_SCREEN; n2[0].parent = HTGL_ROOT_PARENT;
+        n2[0].w = W; n2[0].h = H; n2[0].bg = 0x0000;
+        n2[1].type = HTGL_TYPE_TEXT; n2[1].parent = 0;
+        n2[1].font = 1; n2[1].fg = 0xFFFF; n2[1].text_ref = 0;
+        uint8_t *st2 = b2 + hd.strtab_off;
+        st2[0] = 3; st2[1] = 'A'; st2[2] = '\n'; st2[3] = 'B';   /* "A\nB" */
+        memcpy(b2, &hd, sizeof(hd));
+        memcpy(b2 + sizeof(hd), n2, sizeof(n2));
+        int l2 = (int)(hd.strtab_off + 4);
+
+        memset(fb, 0, sizeof(fb));
+        htgl_init(&ctx, &hal, lb, W * 4);
+        CHECK(htgl_load(&ctx, b2, l2) == 0);
+        htgl_layout(&ctx);
+        htgl_render(&ctx);
+        int line0 = 0, line1 = 0;
+        for (int y = 0; y < 8; y++)  for (int x = 0; x < 8; x++) if (fb[y * W + x] == 0xFFFF) line0 = 1;
+        for (int y = 8; y < 16; y++) for (int x = 0; x < 8; x++) if (fb[y * W + x] == 0xFFFF) line1 = 1;
+        CHECK(line0 == 1);   /* 'A' on the first line (rows 0-7) */
+        CHECK(line1 == 1);   /* 'B' pushed to the second line by '\n' (rows 8-15) */
+    }
+
     printf("ok\n");
     return 0;
 }
