@@ -77,6 +77,32 @@ int main(void) {
         CHECK(fb[14 * W + 0] == 0xEEEE);             /* row 14 never flushed (screen_h=14) */
     }
 
+    /* V2 opacity table: 50% red over blue must be RGB565-blended, not replaced. */
+    {
+        uint8_t b3[256];
+        htgl_header hd; memcpy(hd.magic, "HTGL", 4);
+        hd.version = 2; hd.flags = HTGL_FLAG_OPACITY; hd.node_count = 2;
+        hd.screen_w = W; hd.screen_h = H;
+        hd.strtab_off = sizeof(htgl_header) + 2 * sizeof(htgl_node) + 2;
+        hd.anim_count = 0;
+        htgl_node n3[2]; memset(n3, 0, sizeof(n3));
+        n3[0].type = HTGL_TYPE_SCREEN; n3[0].parent = HTGL_ROOT_PARENT;
+        n3[0].w = W; n3[0].h = H; n3[0].bg = 0x001F;  /* blue */
+        n3[1].type = HTGL_TYPE_BOX; n3[1].parent = 0;
+        n3[1].x = 4; n3[1].y = 4; n3[1].w = 8; n3[1].h = 8; n3[1].bg = 0xF800;
+        memcpy(b3, &hd, sizeof(hd));
+        memcpy(b3 + sizeof(hd), n3, sizeof(n3));
+        b3[sizeof(hd) + sizeof(n3)] = 255;  /* screen */
+        b3[sizeof(hd) + sizeof(n3) + 1] = 128;  /* box */
+
+        memset(fb, 0xEE, sizeof(fb));
+        htgl_init(&ctx, &hal, line_buf, W * 4);
+        CHECK(htgl_load(&ctx, b3, hd.strtab_off) == 0);
+        htgl_layout(&ctx);
+        htgl_render(&ctx);
+        CHECK(fb[5 * W + 5] == 0x8010);  /* round(red*.5 + blue*.5) */
+    }
+
     printf("ok\n");
     return 0;
 }

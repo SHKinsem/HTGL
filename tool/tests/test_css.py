@@ -24,3 +24,9 @@ def test_unknown_props_ignored():
 def test_empty_and_malformed_safe():
     assert parse_style("") == {}
     assert parse_style("garbage;;;:") == {}
+
+
+def test_parses_rounded_glass_style_subset():
+    out = parse_style("border-radius:18px; backdrop-filter: blur(3px)")
+    assert out["border-radius"] == 18
+    assert out["backdrop-blur"] == 3

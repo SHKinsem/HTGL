@@ -202,10 +202,10 @@ int main(void) {
         CHECK(htgl_load(&ctx, t, tlen) == 0);
     }
 
-    /* (k) unknown major version rejected */
+    /* (k) unknown major version rejected (V3 carries visual style). */
     {
         uint8_t v[128]; memcpy(v, blob, len);
-        ((htgl_header *)v)->version = 2;
+        ((htgl_header *)v)->version = 4;
         CHECK(htgl_load(&ctx, v, len) == -3);
     }
 

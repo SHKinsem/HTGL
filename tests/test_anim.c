@@ -55,6 +55,38 @@ static int build_anim_blob(uint8_t *out, int out_size,
     return anims_end;
 }
 
+/* Build a V3 blob with a rounded, translucent, blurred glass card. */
+static int build_glass_blob(uint8_t *out) {
+    int nodes_end = (int)sizeof(htgl_header) + 3 * (int)sizeof(htgl_node);
+    int opacity_end = nodes_end + 3;
+    int styles_end = opacity_end + 6;
+
+    htgl_header h;
+    memcpy(h.magic, "HTGL", 4);
+    h.version = 3; h.flags = HTGL_FLAG_OPACITY | HTGL_FLAG_VISUAL_STYLE;
+    h.node_count = 3;
+    h.screen_w = SCREEN_W; h.screen_h = SCREEN_H;
+    h.strtab_off = (uint16_t)styles_end;
+    h.anim_count = 0;
+
+    htgl_node n[3];
+    memset(n, 0, sizeof(n));
+    n[0].type = HTGL_TYPE_SCREEN; n[0].parent = HTGL_ROOT_PARENT;
+    n[0].w = SCREEN_W; n[0].h = SCREEN_H; n[0].bg = 0x001F;
+    n[1].type = HTGL_TYPE_BOX; n[1].parent = 0;
+    n[1].x = 10; n[1].y = 20; n[1].w = 40; n[1].h = 10; n[1].bg = 0xFFFF;
+    n[2].type = HTGL_TYPE_BOX; n[2].parent = 0;
+    n[2].x = 10; n[2].y = 10; n[2].w = 40; n[2].h = 40; n[2].bg = 0xF800;
+    const uint8_t opacity[3] = {255, 255, 128};
+    const uint8_t styles[6] = {0, 0, 0, 0, 8, 2};
+
+    memcpy(out, &h, sizeof(h));
+    memcpy(out + sizeof(h), n, sizeof(n));
+    memcpy(out + nodes_end, opacity, sizeof(opacity));
+    memcpy(out + opacity_end, styles, sizeof(styles));
+    return styles_end;
+}
+
 /* ------------------------------------------------------------------ Phase A */
 
 static int test_sizeof_anim(void) {
@@ -260,17 +292,70 @@ static int test_tick_return_value(void) {
     return 0;
 }
 
+/* Geometry is kept in Q24.8 even though raster output is integer pixels.
+   A one-pixel move therefore retains quarter-pixel progress, and the caller
+   is told to redraw only once rounding reaches a visible pixel. */
+static int test_tick_geometry_q24_8(void) {
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 0 /* x */, 0 /* once */, 0, 1, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+
+    /* Quarter of a 1px move: retained in fixed-point, not visible yet. */
+    CHECK(htgl_tick(&ctx, 250) == 0);
+    CHECK(ctx.cur_x_fp[1] == 64);   /* 0.25 * 256 */
+    CHECK(ctx.cur_x[1] == 0);
+
+    /* Halfway rounds to the next raster pixel. */
+    CHECK(htgl_tick(&ctx, 500) == 1);
+    CHECK(ctx.cur_x_fp[1] == 128);  /* 0.5 * 256 */
+    CHECK(ctx.cur_x[1] == 1);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ Phase C */
 
 /* Capture HAL for render tests. */
 #define RW 240
 #define RH 200
 static uint16_t g_fb[RW * RH];
+static int g_flush_count;
+static int g_last_flush_x, g_last_flush_y, g_last_flush_w, g_last_flush_h;
 
 static void cap_flush(int x, int y, int w, int h, const uint16_t *buf) {
+    g_flush_count++;
+    g_last_flush_x = x; g_last_flush_y = y;
+    g_last_flush_w = w; g_last_flush_h = h;
     for (int row = 0; row < h; row++)
         for (int col = 0; col < w; col++)
             g_fb[(y + row) * RW + (x + col)] = buf[row * w + col];
+}
+
+static int test_render_rect_composites_only_requested_region(void) {
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 0 /* x */, 0 /* once */, 30, 100, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[RW * 4];
+    htgl_hal hal = { cap_flush };
+    memset(g_fb, 0xA5, sizeof(g_fb));
+    htgl_init(&ctx, &hal, lb, RW * 4);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    htgl_layout(&ctx);
+
+    g_flush_count = 0;
+    htgl_render_rect(&ctx, 32, 0, 5, 30);
+    CHECK(g_flush_count == 1);
+    CHECK(g_last_flush_x == 32 && g_last_flush_y == 0);
+    CHECK(g_last_flush_w == 5 && g_last_flush_h == 30);
+    CHECK(g_fb[0 * RW + 32] == 0xF800);  /* red box replayed in dirty region */
+    CHECK(g_fb[0 * RW + 31] == 0xA5A5);  /* neighbour was never flushed */
+
+    g_flush_count = 0;
+    htgl_render_rect(&ctx, -5, -5, 2, 2);
+    CHECK(g_flush_count == 0);            /* wholly off-screen is a no-op */
+    return 0;
 }
 
 static int test_layout_uses_cur_x(void) {
@@ -320,6 +405,42 @@ static int test_render_uses_cur_w(void) {
     CHECK(g_fb[0 * RW + 35] == 0xF800);    /* still inside */
     CHECK(g_fb[0 * RW + 95] == 0xF800);    /* now inside (w expanded to 100) */
     CHECK(g_fb[0 * RW + 130] != 0xF800);   /* still outside */
+    return 0;
+}
+
+static int test_v3_rounded_glass_render(void) {
+    uint8_t blob[256];
+    int len = build_glass_blob(blob);
+    htgl_ctx ctx;
+    uint16_t lb[RW * 4];
+    htgl_hal hal = { cap_flush };
+    memset(g_fb, 0, sizeof(g_fb));
+    htgl_init(&ctx, &hal, lb, RW * 4);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    CHECK(ctx.styles != 0);
+    CHECK(ctx.styles[4] == 8 && ctx.styles[5] == 2);
+    CHECK(ctx.cur_opacity[2] == 128);
+    htgl_layout(&ctx);
+    htgl_render(&ctx);
+    CHECK(g_fb[10 * RW + 10] == 0x001F);  /* rounded corner preserves backdrop */
+    CHECK(g_fb[10 * RW + 30] != 0x001F);  /* top edge is inside the rounded card */
+    CHECK(g_fb[20 * RW + 30] != 0xFFFF);  /* glass tint changes the white stripe */
+    return 0;
+}
+
+static int test_tick_opacity_animation(void) {
+    uint8_t blob[256];
+    int len = build_anim_blob(blob, sizeof(blob), 5 /* opacity */, 0, 0, 255, 1000);
+    htgl_ctx ctx;
+    uint16_t lb[SCREEN_W * 2];
+    htgl_init(&ctx, 0, lb, SCREEN_W * 2);
+    CHECK(htgl_load(&ctx, blob, len) == 0);
+    CHECK(htgl_tick(&ctx, 0) == 1);
+    CHECK(ctx.cur_opacity[1] == 0);
+    CHECK(htgl_tick(&ctx, 500) == 1);
+    CHECK(ctx.cur_opacity[1] == 127);
+    CHECK(htgl_tick(&ctx, 1000) == 1);
+    CHECK(ctx.cur_opacity[1] == 255);
     return 0;
 }
 
@@ -684,10 +805,14 @@ int main(void) {
     RUN(test_tick_loop);
     RUN(test_tick_pingpong);
     RUN(test_tick_return_value);
+    RUN(test_tick_geometry_q24_8);
 
     /* Phase C */
     RUN(test_layout_uses_cur_x);
     RUN(test_render_uses_cur_w);
+    RUN(test_render_rect_composites_only_requested_region);
+    RUN(test_v3_rounded_glass_render);
+    RUN(test_tick_opacity_animation);
 
     /* Phase D — easing */
     RUN(test_tick_easing_linear);

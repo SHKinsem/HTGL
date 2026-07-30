@@ -34,6 +34,11 @@ void htgl_layout(htgl_ctx *ctx);
 /* Render the whole screen in bands, flushing each via the HAL. */
 void htgl_render(htgl_ctx *ctx);
 
+/* Recompose and flush only [x, x+w) x [y, y+h). All nodes are replayed in
+   painter order, so the result is identical to a full render in that region.
+   The rectangle is clipped to the screen; empty/off-screen regions are no-ops. */
+void htgl_render_rect(htgl_ctx *ctx, int x, int y, int w, int h);
+
 /* Screen dimensions from the loaded blob. */
 int htgl_screen_w(const htgl_ctx *ctx);
 int htgl_screen_h(const htgl_ctx *ctx);

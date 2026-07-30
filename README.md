@@ -33,7 +33,8 @@ with a tiny portable C99 engine. The same `.html` previews in any browser.
 - 🪶 **Tiny & portable** — the engine is pure **C99** with **no mandatory heap** and a chunked renderer that never needs a full framebuffer, so it fits low-end MCUs (e.g. STM32F1, tens of KB RAM, no FPU). [Measured](#footprint--does-it-really-fit-a-low-end-mcu): **~2.6 KB flash + ~4 KB RAM** cross-compiled for Cortex-M3.
 - 🔌 **HAL-decoupled** — the engine is platform-agnostic; only a `flush()` callback differs between the PC simulator and real hardware.
 - 📦 **One binary, two ways to load** — the transpiler emits a compact `.uib` that you can either `#include` as a C array (zero runtime parsing) **or** load at runtime from SD/OTA (swap the UI without reflashing).
-- 🎬 **Animation** — declare motion with `data-anim` *or* CSS `@keyframes`/`animation` (they compile byte-identical), interpolated on a `htgl_tick(now_ms)` call with integer math (no FPU): position, size, and per-channel color, with easing curves.
+- 🎬 **Animation & glass UI** — declare motion with `data-anim` *or* CSS `@keyframes`/`animation` (they compile byte-identical), interpolated on a `htgl_tick(now_ms)` call with integer math (no FPU): Q24.8 position/size, per-channel RGB565 color, easing curves, independent Q0.8 `opacity`, rounded cards (`border-radius`), and band-local `backdrop-filter: blur(Npx)`.
+- ⚡ **Partial redraw** — `htgl_render_rect()` replays the scene only in an animated element's dirty rectangle, preserving painter order and alpha compositing without a full framebuffer.
 - 📖 **Documented** — a complete [usage reference](docs/USAGE.md) covers the exact supported subset (and its limits), every CLI flag, the full C API + `htgl_load` return codes, the memory-safety model, and a porting walkthrough.
 
 ## How it works
@@ -144,6 +145,21 @@ pio run -d port/esp32 -t upload  # flash, then: pio device monitor
 
 Porting to another MCU/display = implement one `flush(x,y,w,h,rgb565)`; the engine is unchanged.
 
+### ESP-IDF: ESP32-S3 + 240x280 ST7789
+
+[`port/espidf_st7789/`](port/espidf_st7789/) is a standalone ESP-IDF 5.5 example
+for the ESP32-S3 N8R8 wiring used by the DragonSoul box. It documents the exact
+GPIO map, 80 MHz SPI3 ST7789 setup, panel offset, PSRAM task-stack configuration,
+and a two-line-buffer DMA pipeline. The sample renders rounded translucent
+cards and a moving Q24.8 orb without a framebuffer.
+
+```sh
+cd port/espidf_st7789
+idf.py set-target esp32s3
+idf.py build
+idf.py -p COM8 flash monitor
+```
+
 ## Footprint — does it really fit a low-end MCU?
 
 The engine is platform-independent C99, so we can cross-compile it for the thesis target
@@ -172,13 +188,15 @@ A flat, little-endian, zero-copy layout. Compile-time and runtime loading share 
 
 | Section | Size | Contents |
 |---|---|---|
-| **Header** | 16 B | magic `HTGL`, version, node count, screen W/H, string-table offset, anim count |
+| **Header** | 16 B | magic `HTGL`, version, flags, node count, screen W/H, string-table offset, anim count |
 | **Node[]** | 18 B each | type (`SCREEN`/`BOX`/`TEXT`), parent index, x/y/w/h, bg/fg (RGB565), font scale, text ref |
-| **Anim[]** | 10 B each | node index, prop (x/y/w/h/bg), mode (loop + easing, packed), from/to, duration (ms) |
+| **Anim[]** | 10 B each | node index, prop (x/y/w/h/bg/opacity), mode (loop + easing, packed), from/to, duration (ms) |
+| **Opacity[]** | node count B (v2 only) | Q0.8 alpha, present iff header `flags` bit 1 is set |
+| **VisualStyle[]** | 2 × node count B (v3 only) | per-node `border-radius` and `backdrop-filter: blur()` amount; present iff header `flags` bit 2 is set |
 | **String table** | var | length-prefixed ASCII for text nodes |
 | **CRC32 trailer** | 4 B (optional) | present iff header `flags` bit 0 (`--crc`); little-endian CRC32 over all preceding bytes, verified on load |
 
-Animation-free blobs carry `anim count = 0` and an empty `Anim[]`, and CRC is opt-in (`flags = 0`), so a plain blob stays byte-identical to the original format. Full field-level reference: [`docs/USAGE.md`](docs/USAGE.md#14-the-uib-binary-format).
+Opaque blobs remain byte-identical v1 output. Transparent blobs use v2, while rounded or glass UI uses v3; the optional tables follow `Anim[]`. CRC remains opt-in at header `flags` bit 0. Full field-level reference: [`docs/USAGE.md`](docs/USAGE.md#14-the-uib-binary-format).
 
 ## Prerequisites
 

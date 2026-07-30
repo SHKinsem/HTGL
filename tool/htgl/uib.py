@@ -1,8 +1,9 @@
 """Node tree (IR) -> .uib binary bytes.
 
-Layout: [Header 16B][Node 18B * count][Anim 10B * anim_count][StringTable].
-The header's last u16 carries anim_count (0 for animation-free blobs, which are
-then byte-identical to the original format). All little-endian.
+V1 layout: [Header 16B][Node 18B * count][Anim 10B * anim_count][StringTable].
+V2 adds an 8-bit opacity table (one byte per node) before the string table.
+V3 optionally adds a 2-byte-per-node visual-style table (radius, backdrop blur).
+Opaque documents continue to emit byte-identical V1 blobs. All little-endian.
 """
 
 import struct
@@ -18,9 +19,14 @@ HEADER_SIZE = struct.calcsize(HEADER_FMT)   # 16
 NODE_SIZE = struct.calcsize(NODE_FMT)       # 18
 ANIM_SIZE = struct.calcsize(ANIM_FMT)       # 10
 NO_TEXT = 0xFFFF
-VERSION = 1
+VERSION_V1 = 1
+VERSION_OPACITY = 2
+VERSION_VISUAL_STYLE = 3
+FLAG_CRC32 = 0x01
+FLAG_OPACITY = 0x02
+FLAG_VISUAL_STYLE = 0x04
 
-_ANIM_PROP = {"x": 0, "y": 1, "w": 2, "h": 3, "bg": 4}
+_ANIM_PROP = {"x": 0, "y": 1, "w": 2, "h": 3, "bg": 4, "opacity": 5}
 _ANIM_LOOP = {"once": 0, "loop": 1, "pingpong": 2}
 _ANIM_EASE = {"linear": 0, "ease-in": 1, "ease-out": 2, "ease-in-out": 3}
 
@@ -44,8 +50,25 @@ def build_uib(nodes, screen_w, screen_h, diag=None, crc=False):
     count = len(nodes)
     anims = [(i, n.anim) for i, n in enumerate(nodes) if getattr(n, "anim", None)]
     anim_count = len(anims)
-    # Anim table sits between the node array and the string table.
+    opacities = bytes(getattr(n, "opacity", 255) for n in nodes)
+    has_opacity = any(alpha != 255 for alpha in opacities) or any(
+        animation["prop"] == "opacity" for _, animation in anims)
+    styles = bytearray()
+    for n in nodes:
+        styles.append(min(255, max(0, int(getattr(n, "radius", 0)))))
+        styles.append(min(255, max(0, int(getattr(n, "backdrop_blur", 0)))))
+    has_visual_style = any(styles)
+    version = (VERSION_VISUAL_STYLE if has_visual_style else
+               (VERSION_OPACITY if has_opacity else VERSION_V1))
+    flags = ((FLAG_CRC32 if crc else 0) |
+             (FLAG_OPACITY if has_opacity else 0) |
+             (FLAG_VISUAL_STYLE if has_visual_style else 0))
+    # Anim table plus optional V2/V3 tables precede the string table.
     strtab_off = HEADER_SIZE + NODE_SIZE * count + ANIM_SIZE * anim_count
+    if has_opacity:
+        strtab_off += count
+    if has_visual_style:
+        strtab_off += 2 * count
 
     # First pass: build string table and record each text node's offset.
     strtab = bytearray()
@@ -65,7 +88,7 @@ def build_uib(nodes, screen_w, screen_h, diag=None, crc=False):
 
     out = bytearray()
     out += struct.pack(
-        HEADER_FMT, b"HTGL", VERSION, (0x01 if crc else 0), count,
+        HEADER_FMT, b"HTGL", version, flags, count,
         screen_w, screen_h, strtab_off, anim_count,
     )
     for i, n in enumerate(nodes):
@@ -102,6 +125,10 @@ def build_uib(nodes, screen_w, screen_h, diag=None, crc=False):
             ANIM_FMT, node_idx, _ANIM_PROP[a["prop"]],
             mode_byte, frm, tov, a["dur"],
         )
+    if has_opacity:
+        out += opacities
+    if has_visual_style:
+        out += styles
     out += strtab
     if crc:
         # CRC32 over the whole blob (header with flags=1 + nodes + anims + strtab),

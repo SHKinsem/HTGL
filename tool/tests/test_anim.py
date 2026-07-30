@@ -241,3 +241,13 @@ def test_bg_anim_named_color():
     from htgl.colors import to_rgb565
     assert frm == _signed16(to_rgb565("red"))
     assert to   == _signed16(to_rgb565("blue"))
+def test_data_anim_opacity_uses_css_alpha_range():
+    nodes = parse_html(
+        '<div style="position:absolute;left:0;top:0;width:10px;height:10px" '
+        'data-anim="opacity" data-from="0.2" data-to="0.8" data-dur="100"></div>',
+        240, 200)
+    node = nodes[1]
+    assert node.opacity == 51
+    assert node.anim["prop"] == "opacity"
+    assert node.anim["from"] == 51
+    assert node.anim["to"] == 204

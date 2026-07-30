@@ -32,17 +32,17 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
        the ctx in an honest "not loaded" state (hdr==NULL). Otherwise a failed
        reload would keep rendering the previous UI -- silent, and a use-after-free
        on the SD/OTA reload path where the old blob's memory may be gone. */
-    ctx->hdr = 0; ctx->nodes = 0; ctx->anims = 0;
+    ctx->hdr = 0; ctx->nodes = 0; ctx->anims = 0; ctx->opacities = 0; ctx->styles = 0;
     ctx->count = 0; ctx->anim_count = 0;
     if (len < (int)sizeof(htgl_header)) return -1;
     const htgl_header *h = (const htgl_header *)blob;
     if (memcmp(h->magic, "HTGL", 4) != 0) return -2;
-    if (h->version != 1) return -3;
+    if (h->version != 1 && h->version != 2 && h->version != 3) return -3;
     /* Optional CRC32 trailer (flags bit 0): verify integrity BEFORE trusting any
        field, then drop the 4 trailer bytes from every subsequent bound. Catches
        silent corruption / a half-written OTA image that still passes the structural
        checks below. Legacy blobs carry flags=0 and skip this entirely. */
-    if (h->flags & 0x01) {
+    if (h->flags & HTGL_FLAG_CRC32) {
         if (len < (int)sizeof(htgl_header) + 4) return -16;
         int dlen = len - 4;
         uint32_t want = (uint32_t)blob[dlen]
@@ -67,8 +67,22 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
        -8 forces strtab_off >= anims_end and -6 forces strtab_off <= len, which
        together would otherwise make this implied and untestable). */
     if (anims_end > len) return -10;
-    /* string table must come after the node array and the anim table. */
-    if (h->strtab_off < anims_end) return -8;
+    int opacity_end = anims_end;
+    const uint8_t *opacities = 0;
+    if (h->version >= 2 && (h->flags & HTGL_FLAG_OPACITY)) {
+        opacity_end += h->node_count;
+        if (opacity_end > len) return -17;
+        opacities = blob + anims_end;
+    }
+    int style_end = opacity_end;
+    const uint8_t *styles = 0;
+    if (h->version >= 3 && (h->flags & HTGL_FLAG_VISUAL_STYLE)) {
+        style_end += 2 * (int)h->node_count;
+        if (style_end > len) return -18;
+        styles = blob + opacity_end;
+    }
+    /* string table must come after nodes, animations, and V2/V3 data tables. */
+    if (h->strtab_off < style_end) return -8;
     /* every node's parent must be the root sentinel or a strictly earlier node;
        this bounds abs_x[parent] and enforces the parent-before-child invariant
        that the single-pass layout relies on. */
@@ -83,7 +97,7 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     const htgl_anim *anims = (const htgl_anim *)(blob + nodes_end);
     for (int i = 0; i < (int)h->anim_count; i++) {
         if (anims[i].node_idx >= (uint16_t)h->node_count) return -11;
-        if (anims[i].prop > 4) return -15;                /* unknown animatable prop:
+        if (anims[i].prop > 5) return -15;                /* unknown animatable prop:
                            htgl_tick has no case for it, so reject rather than no-op. */
     }
     /* validate every referenced string stays inside the blob: node_text() reads
@@ -108,6 +122,8 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
     ctx->count = h->node_count;
     ctx->anims = anims;
     ctx->anim_count = (int)h->anim_count;
+    ctx->opacities = opacities;
+    ctx->styles = styles;
 
     /* Initialize runtime cur_* from static node fields so load+layout+render
        without any tick reproduces the original static behavior exactly. */
@@ -116,7 +132,12 @@ int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len) {
         ctx->cur_y[i]  = nodes[i].y;
         ctx->cur_w[i]  = nodes[i].w;
         ctx->cur_h[i]  = nodes[i].h;
+        ctx->cur_x_fp[i] = (int32_t)nodes[i].x << 8;
+        ctx->cur_y_fp[i] = (int32_t)nodes[i].y << 8;
+        ctx->cur_w_fp[i] = (int32_t)nodes[i].w << 8;
+        ctx->cur_h_fp[i] = (int32_t)nodes[i].h << 8;
         ctx->cur_bg[i] = nodes[i].bg;
+        ctx->cur_opacity[i] = opacities ? opacities[i] : 255;
     }
     return 0;
 }
@@ -141,6 +162,13 @@ void htgl_layout(htgl_ctx *ctx) {
 
 int16_t htgl_test_abs_x(htgl_ctx *c, int i) { return c->abs_x[i]; }
 int16_t htgl_test_abs_y(htgl_ctx *c, int i) { return c->abs_y[i]; }
+
+static int16_t fp_to_i16(int32_t value) {
+    /* Round Q24.8 to the nearest physical pixel. Values are clamped before
+       this helper, so the negation is safe. */
+    return (int16_t)(value >= 0 ? (value + 128) >> 8
+                                : -(((-value) + 128) >> 8));
+}
 
 int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
     int changed = 0;
@@ -210,25 +238,40 @@ int htgl_tick(htgl_ctx *ctx, uint32_t now_ms) {
                 ctx->cur_bg[idx] = color;
                 changed = 1;
             }
+        } else if (a->prop == 5) {
+            int opacity = (int)a->from + ((int)a->to - (int)a->from) * p / 256;
+            if (opacity < 0) opacity = 0;
+            if (opacity > 255) opacity = 255;
+            if (ctx->cur_opacity[idx] != (uint8_t)opacity) {
+                ctx->cur_opacity[idx] = (uint8_t)opacity;
+                changed = 1;
+            }
         } else {
-            /* value = from + (to-from)*p/256, using int32 intermediate to avoid overflow. */
-            int32_t range = (int32_t)a->to - (int32_t)a->from;
-            int32_t val32 = (int32_t)a->from + range * (int32_t)p / 256;
-            /* Clamp to int16 range */
-            if (val32 > 32767) val32 = 32767;
-            if (val32 < -32768) val32 = -32768;
-            int16_t val = (int16_t)val32;
+            /* Geometry uses Q24.8 throughout interpolation. This retains
+               sub-pixel state for consistent animation math, then rounds only
+               at the raster boundary where RGB565 pixels are integer-sized. */
+            int64_t from_fp = (int64_t)a->from << 8;
+            int64_t range_fp = ((int64_t)a->to - (int64_t)a->from) << 8;
+            int64_t value_fp64 = from_fp + range_fp * p / 256;
+            if (value_fp64 > ((int64_t)32767 << 8)) value_fp64 = (int64_t)32767 << 8;
+            if (value_fp64 < ((int64_t)-32768 << 8)) value_fp64 = (int64_t)-32768 << 8;
+            int32_t value_fp = (int32_t)value_fp64;
+            int16_t value = fp_to_i16(value_fp);
 
             int16_t *target = 0;
+            int32_t *target_fp = 0;
             switch (a->prop) {
-                case 0: target = &ctx->cur_x[idx]; break;
-                case 1: target = &ctx->cur_y[idx]; break;
-                case 2: target = &ctx->cur_w[idx]; break;
-                case 3: target = &ctx->cur_h[idx]; break;
+                case 0: target = &ctx->cur_x[idx]; target_fp = &ctx->cur_x_fp[idx]; break;
+                case 1: target = &ctx->cur_y[idx]; target_fp = &ctx->cur_y_fp[idx]; break;
+                case 2: target = &ctx->cur_w[idx]; target_fp = &ctx->cur_w_fp[idx]; break;
+                case 3: target = &ctx->cur_h[idx]; target_fp = &ctx->cur_h_fp[idx]; break;
                 default: break;
             }
-            if (target && *target != val) {
-                *target = val;
+            if (target_fp) *target_fp = value_fp;
+            /* Report a change only when it reaches a physical pixel. Callers
+               can then skip a full render/flush for sub-pixel-only ticks. */
+            if (target && *target != value) {
+                *target = value;
                 changed = 1;
             }
         }
@@ -280,38 +323,60 @@ void htgl_pointer_up(htgl_ctx *ctx, int x, int y) {
     ctx->pressed_node = -1;
 }
 
-void htgl_render(htgl_ctx *ctx) {
-    if (!ctx->hdr) return;   /* not loaded, or a prior load failed: nothing to draw */
+void htgl_render_rect(htgl_ctx *ctx, int x, int y, int w, int h) {
+    if (!ctx->hdr || !ctx->hal || !ctx->hal->flush || w <= 0 || h <= 0) return;
     int sw = ctx->hdr->screen_w;
     int sh = ctx->hdr->screen_h;
-    int band_h = ctx->line_buf_px / sw;
-    if (band_h < 1) band_h = 1;
+
+    /* Calculate the clipped end points in 64-bit arithmetic so an accidental
+       INT_MAX rectangle cannot wrap into a valid-looking screen region. */
+    int64_t x_end64 = (int64_t)x + w;
+    int64_t y_end64 = (int64_t)y + h;
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x_end64 > sw ? sw : (x_end64 < 0 ? 0 : (int)x_end64);
+    int y1 = y_end64 > sh ? sh : (y_end64 < 0 ? 0 : (int)y_end64);
+    if (x0 >= x1 || y0 >= y1) return;
+
+    int rw = x1 - x0;
+    int band_h = ctx->line_buf_px / rw;
+    if (band_h < 1) return;
     uint16_t screen_bg = ctx->nodes[0].bg;
 
-    for (int by = 0; by < sh; by += band_h) {
+    for (int by = y0; by < y1; by += band_h) {
         int bh = band_h;
-        if (by + bh > sh) bh = sh - by;
+        if (by + bh > y1) bh = y1 - by;
 
-        /* clear band to screen background */
-        for (int i = 0; i < sw * bh; i++) ctx->line_buf[i] = screen_bg;
+        /* Replaying every node into only this rectangle keeps z-order and
+           alpha blending identical to a full render without a framebuffer. */
+        for (int i = 0; i < rw * bh; i++) ctx->line_buf[i] = screen_bg;
 
         for (int i = 1; i < ctx->count; i++) {
             const htgl_node *n = &ctx->nodes[i];
-            int ax = ctx->abs_x[i];
+            int ax = ctx->abs_x[i] - x0;
             int ay = ctx->abs_y[i];
+            uint8_t alpha = ctx->cur_opacity[i];
             if (n->type == HTGL_TYPE_BOX) {
-                htgl_fill_rect(ctx->line_buf, sw, by, bh,
-                               ax, ay, ctx->cur_w[i], ctx->cur_h[i], ctx->cur_bg[i]);
+                uint8_t radius = ctx->styles ? ctx->styles[2 * i] : 0;
+                uint8_t blur = ctx->styles ? ctx->styles[2 * i + 1] : 0;
+                htgl_fill_rounded_glass_rect(ctx->line_buf, rw, by, bh,
+                                             ax, ay, ctx->cur_w[i], ctx->cur_h[i], ctx->cur_bg[i],
+                                             alpha, radius, blur);
             } else if (n->type == HTGL_TYPE_TEXT) {
                 int tl;
                 const char *t = node_text(ctx, n, &tl);
                 if (t && tl > 0) {
                     int s = n->font ? n->font : 1;   /* font byte = integer scale */
-                    htgl_draw_text(ctx->line_buf, sw, by, bh,
-                                   ax, ay, t, tl, s, n->fg);
+                    htgl_draw_text_alpha(ctx->line_buf, rw, by, bh,
+                                         ax, ay, t, tl, s, n->fg, alpha);
                 }
             }
         }
-        ctx->hal->flush(0, by, sw, bh, ctx->line_buf);
+        ctx->hal->flush(x0, by, rw, bh, ctx->line_buf);
     }
+}
+
+void htgl_render(htgl_ctx *ctx) {
+    if (!ctx->hdr) return;
+    htgl_render_rect(ctx, 0, 0, ctx->hdr->screen_w, ctx->hdr->screen_h);
 }

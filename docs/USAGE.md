@@ -141,10 +141,13 @@ Layout is **absolute only**: every box is positioned relative to its parent box'
 | `background-color` | ✅ | See [§4](#4-colors). |
 | `color` (text color) | ✅ | Foreground for TEXT children of the div. |
 | `font-size` | ✅ but **snapped** | Quantized to a `×8px` integer scale; see [§5](#5-text-and-fonts). |
-| `border`, `border-radius` | ⛔ | Dropped. No outlines, no rounded corners. |
+| `border` | ⛔ | Dropped. No outlines. |
+| `border-radius` | ✅ | Pixel radius for BOX nodes. Clamped by the renderer to half the box's smaller dimension. |
+| `backdrop-filter: blur(Npx)` | ✅ | Band-local 5-tap glass blur, with `N` clamped to 0..8. It is intentionally not browser-identical. |
 | `box-shadow` | ⛔ | Dropped. |
 | gradients (`linear-gradient`, …) | ⛔ | Dropped → background falls through to **black**. |
-| `opacity`, alpha | ⛔ | No transparency. Boxes are fully opaque fills. |
+| `opacity` | ✅ | `0..1`, quantized to Q0.8 (0..255). It applies to boxes and text; nested values multiply. |
+| `rgba()` / `hsla()` alpha | ⛔ | The color parser still uses RGB only. Use the separate `opacity` property. |
 | `transform` (rotate/scale/translate) | ⛔ | Dropped. |
 | flexbox / grid | ⛔ | Dropped. No layout effect. |
 | percentage / responsive layout | ⛔ | See `%` row above. |
@@ -156,7 +159,9 @@ Layout is **absolute only**: every box is positioned relative to its parent box'
 | `data-tap` | ✅ | See [§7](#7-touch--tap-input). |
 
 > **Drops are warned.** `css.parse_style` keeps only a whitelist of properties
-> (`left/top/width/height/font-size` as px; `position/background-color/color` as strings); every
+> (`left/top/width/height/font-size/border-radius` as px; `opacity` as a number from 0 to 1;
+> `backdrop-filter: blur(Npx)` as a 0..8 integer;
+> `position/background-color/color` as strings); every
 > other declaration is discarded **with a warning**, and a non-px unit on a px property is dropped
 > **with a warning** too (`css.py`). Run the CLI and read stderr, or use `--strict` to fail on them.
 
@@ -239,18 +244,20 @@ near colors — this is inherent to the 16-bit panel format, not a bug.
 ## 6. Animation
 
 A single property of a box can be animated over time. The engine interpolates with **integer math
-only** (no FPU) when you call `htgl_tick(now_ms)`. There are two equivalent authoring syntaxes; both
+only** (no FPU) when you call `htgl_tick(now_ms)`. Geometry keeps a Q24.8 runtime value and rounds
+only at the pixel raster boundary; color interpolates in RGB565 channels. There are two equivalent authoring syntaxes; both
 compile to **byte-identical** animation records in the `.uib`.
 
 ### Animated properties
 
 | Code | Property | CSS equivalent | Interpolation |
 |---|---|---|---|
-| `x` | left offset | `left` | linear in int16 |
-| `y` | top offset | `top` | linear in int16 |
-| `w` | width | `width` | linear in int16 |
-| `h` | height | `height` | linear in int16 |
+| `x` | left offset | `left` | Q24.8, rounded to pixel for raster |
+| `y` | top offset | `top` | Q24.8, rounded to pixel for raster |
+| `w` | width | `width` | Q24.8, rounded to pixel for raster |
+| `h` | height | `height` | Q24.8, rounded to pixel for raster |
 | `bg` | background color | `background-color` | per-RGB565-channel blend |
+| `opacity` | primitive alpha | `data-anim` only | Q0.8 (0..255) alpha |
 
 Exactly **one** property per element may be animated.
 
@@ -267,8 +274,8 @@ Exactly **one** property per element may be animated.
 
 | Attribute | Values | Default | Notes |
 |---|---|---|---|
-| `data-anim` | `x` `y` `w` `h` `bg` | (required) | If absent or unrecognized, no animation is attached. |
-| `data-from` / `data-to` | integer (geometry) or color (for `bg`) | `0` / `0` (geometry); `black` (bg) | For `bg`, parsed as a color via the same rules as [§4](#4-colors) (unparseable → black). |
+| `data-anim` | `x` `y` `w` `h` `bg` `opacity` | (required) | If absent or unrecognized, no animation is attached. |
+| `data-from` / `data-to` | integer (geometry), color (`bg`), or decimal `0..1` (`opacity`) | `0` / `0` (geometry); `black` (bg); `0` / `1` (opacity) | For `bg`, parsed as a color via the same rules as [§4](#4-colors) (unparseable → black). |
 | `data-dur` | integer ms | `1000` | Clamped to a minimum of `1` ms. |
 | `data-loop` | `once` `loop` `pingpong` | `once` | `once`=clamp at end · `loop`=restart · `pingpong`=reverse each pass. |
 | `data-ease` | `linear` `ease-in` `ease-out` `ease-in-out` | `linear` | Unrecognized values fall back to `linear`. |
@@ -305,12 +312,21 @@ CSS-subset rules (`cssanim.py`):
 ### Runtime model
 
 `htgl_tick(ctx, now_ms)` advances the animation clock to an absolute time in milliseconds and
-mutates the per-node *current* values (`cur_x/cur_y/cur_w/cur_h/cur_bg`). It returns `1` if any
-value changed since the previous tick, else `0`. **After ticking you must call `htgl_layout` then
+mutates the per-node *current* values (`cur_x/cur_y/cur_w/cur_h/cur_bg/cur_opacity`). Geometry also retains
+Q24.8 state internally, so a sub-pixel tick is accumulated but returns `0` until its rounded pixel
+value changes. It returns `1` if any visible value changed since the previous tick, else `0`. **After a `1` return, call `htgl_layout` then
 `htgl_render`** to see the change. With no animations loaded it is a no-op returning `0`.
 
-Easing curves are integer quadratics on a 0..256 fixed-point fraction; geometry results are
-clamped to int16 range inside `htgl_tick`.
+Easing curves use an integer Q0.8 fraction (0..256); geometry results are Q24.8 then clamped to
+the stored int16 coordinate range, while color is interpolated per RGB565 channel.
+
+### Transparency calculation
+
+`opacity: 0..1` is compiled to a one-byte Q0.8 alpha value. The blend fast-paths `0` (skip) and
+`255` (opaque); all other values use `(src * alpha + dst * (256 - alpha) + 128) >> 8` per RGB565
+channel. It does not need Q24.8 because RGB565 has only 5/6-bit channels. Parent opacity is
+multiplied into child primitives during transpilation, not composited as a browser-style off-screen
+group; this keeps RAM bounded to the line buffer.
 
 ---
 
@@ -390,6 +406,14 @@ htgl_render(&ctx)                       ──►  bands flushed via hal.flush()
 For a **static** screen: `init → load → layout → render` once. For **animation**: call
 `tick → layout → render` each frame with the current `now_ms`.
 
+### Partial redraw for animations
+
+`htgl_render_rect(&ctx, x, y, w, h)` recomposes and flushes only that rectangle. It still clears
+to the screen color and replays **every** node in painter order inside the rectangle, so overlapping
+boxes, text, and Q0.8 alpha blending match `htgl_render` exactly without needing a framebuffer.
+Pass the union of an animated primitive's old and new visual bounds; call `htgl_layout` first.
+Off-screen and empty rectangles are safe no-ops.
+
 ### The HAL
 
 ```c
@@ -410,6 +434,7 @@ RGB565 words for the band rectangle `(x,y,w,h)` in screen coordinates.
 | `htgl_load` | `int htgl_load(htgl_ctx *ctx, const uint8_t *blob, int len)` | Validate and attach a `.uib` blob **zero-copy** (the blob must outlive the context). Returns `0` on success or a negative code; see [§9](#9-htgl_load-return-codes). |
 | `htgl_layout` | `void htgl_layout(htgl_ctx *ctx)` | Resolve each node's relative coords into absolute screen coords. Reflects current (possibly animated) values. Call after `load`, after each `tick`, and before hit-testing. |
 | `htgl_render` | `void htgl_render(htgl_ctx *ctx)` | Render the whole screen in horizontal bands sized to `line_buf_px / screen_w`, flushing each via `hal.flush`. |
+| `htgl_render_rect` | `void htgl_render_rect(htgl_ctx *ctx, int x, int y, int w, int h)` | Recompose and flush only a clipped screen rectangle. All nodes are replayed in painter order, so it is safe for overlaps and opacity. |
 | `htgl_screen_w` | `int htgl_screen_w(const htgl_ctx *ctx)` | Screen width from the loaded blob (`0` if none loaded). |
 | `htgl_screen_h` | `int htgl_screen_h(const htgl_ctx *ctx)` | Screen height from the loaded blob (`0` if none loaded). |
 | `htgl_tick` | `int htgl_tick(htgl_ctx *ctx, uint32_t now_ms)` | Advance the animation clock to `now_ms`. Returns `1` if any animated value changed, else `0`. Safe with no animations (returns `0`). Must be followed by `layout`+`render`. |
@@ -451,8 +476,10 @@ fully validates an untrusted blob and returns the **first** failure it finds:
 | `-12` | The caller's line buffer is too small: `line_buf_px < screen_w`. (Blob-controlled `screen_w`, so this is an untrusted-input bound, not just a contract.) |
 | `-13` | A TEXT node's `text_ref` (or its length-prefixed string body) lies outside the blob. |
 | `-14` | A node has an unknown `type` (`> HTGL_TYPE_TEXT`). The renderer has no handler for it, so it is rejected rather than silently drawn as nothing. |
-| `-15` | An anim record has an unknown `prop` (`> 4`). `htgl_tick` has no case for it, so it is rejected rather than silently animating nothing. |
+| `-15` | An anim record has an unknown `prop` (`> 5`). `htgl_tick` has no case for it, so it is rejected rather than silently animating nothing. |
 | `-16` | The header's CRC32 flag (`flags` bit 0) is set but the trailing CRC doesn't match the blob (corrupted / truncated / half-written), or the blob is too short to hold the 4-byte trailer. |
+| `-17` | A v2 blob requests its opacity table but it is truncated. |
+| `-18` | A v3 blob requests its visual-style table but it is truncated. |
 
 On any non-zero code the context is reset to a clean **not-loaded** state: `htgl_screen_w/h`
 return `0` and `htgl_render` is a safe no-op. A *failed reload* therefore also clears the
@@ -622,18 +649,20 @@ compile-time constant in `htgl_internal.h`).
 ## 14. The `.uib` binary format
 
 A flat, little-endian, **zero-copy** layout. Compile-time and runtime loading share identical
-bytes. Section order: **Header · Node[] · Anim[] · String table**.
+bytes. Section order: **Header · Node[] · Anim[] · Opacity[] (v2/v3) · VisualStyle[] (v3) · String table**.
 
 | Section | Size | Contents |
 |---|---|---|
-| **Header** | 16 B | magic `HTGL`, version (=1), flags, `node_count`, `screen_w`, `screen_h`, `strtab_off`, `anim_count`. |
+| **Header** | 16 B | magic `HTGL`, version (v1 opaque; v2 opacity; v3 rounded/glass styles), flags, `node_count`, `screen_w`, `screen_h`, `strtab_off`, `anim_count`. |
 | **Node[]** | 18 B each | `type` (SCREEN/BOX/TEXT), `font` byte (TEXT: scale; BOX: tap id), `parent` index, `x`/`y`/`w`/`h` (int16), `bg`/`fg` (RGB565), `text_ref`. |
-| **Anim[]** | 10 B each | `node_idx`, `prop` (0=x 1=y 2=w 3=h 4=bg), `mode` byte (`loop = mode & 0x0F`, `ease = (mode >> 4) & 0x0F`), `from`/`to` (int16; for `bg`, the RGB565 value reinterpreted as int16), `dur_ms`. |
+| **Anim[]** | 10 B each | `node_idx`, `prop` (0=x 1=y 2=w 3=h 4=bg 5=opacity), `mode` byte (`loop = mode & 0x0F`, `ease = (mode >> 4) & 0x0F`), `from`/`to` (int16; for `bg`, the RGB565 value reinterpreted as int16; for `opacity`, 0..255), `dur_ms`. |
+| **Opacity[]** | node_count B (v2/v3 only) | One Q0.8 alpha byte for each node. Present iff header `flags` bit 1 is set. |
+| **VisualStyle[]** | 2 × node_count B (v3 only) | Per-node `border-radius` then `backdrop-filter: blur()` amount. Present iff header `flags` bit 2 is set. |
 | **String table** | variable | length-prefixed ASCII (1-byte length + bytes), one entry per TEXT node, ≤ 255 bytes each. |
 | **CRC32 trailer** | 4 B (optional) | Present **iff** header `flags` bit 0 is set (`--crc`). Little-endian CRC32 (IEEE/zlib, poly `0xEDB88320`) over **all** preceding bytes; verified on load (`-16` on mismatch). |
 
-Animation-free blobs carry `anim_count = 0` and an empty `Anim[]`, and CRC is opt-in (`flags = 0`),
-so a plain blob is byte-identical to the pre-animation format. The exact structs are in `engine/htgl_internal.h`
+Opaque blobs remain v1 and are byte-identical to the pre-opacity format. A transparent blob is v2,
+while a rounded or glass blob is v3, with its style table after any alpha table. CRC remains opt-in at flag bit 0. The exact structs are in `engine/htgl_internal.h`
 (`htgl_header`/`htgl_node`/`htgl_anim`) and the `struct` formats in `tool/htgl/uib.py`
 (`HEADER_FMT`/`NODE_FMT`/`ANIM_FMT`).
 

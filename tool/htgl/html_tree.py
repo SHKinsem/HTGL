@@ -15,7 +15,7 @@ Phase 2 — CSS animation:
 from html.parser import HTMLParser
 
 from .colors import to_rgb565
-from .css import parse_style
+from .css import _to_opacity, parse_style
 from .cssanim import parse_keyframes, parse_animation
 from .diagnostics import warn
 
@@ -25,7 +25,7 @@ TEXT = 2
 
 ROOT_PARENT = 0xFFFF
 
-_ANIM_PROPS = ("x", "y", "w", "h", "bg")
+_ANIM_PROPS = ("x", "y", "w", "h", "bg", "opacity")
 _EASE_VALUES = ("linear", "ease-in", "ease-out", "ease-in-out")
 
 
@@ -47,6 +47,11 @@ def _parse_anim(attrs, diag=None):
         # from/to are color values parsed via to_rgb565 (returned as uint16)
         from_val = to_rgb565(attrs.get("data-from", "black"), diag)
         to_val   = to_rgb565(attrs.get("data-to",   "black"), diag)
+    elif prop == "opacity":
+        from_val = _to_opacity(attrs.get("data-from", "0"), diag)
+        to_val = _to_opacity(attrs.get("data-to", "1"), diag)
+        if from_val is None or to_val is None:
+            return None
     else:
         from_val = _int(attrs.get("data-from"), 0)
         to_val   = _int(attrs.get("data-to"),   0)
@@ -71,6 +76,9 @@ class Node:
         self.bg = 0x0000
         self.fg = 0x0000
         self.font_size = 8
+        self.opacity = 255
+        self.radius = 0
+        self.backdrop_blur = 0
         self.text = None
         self.anim = None  # dict(prop, from, to, dur, loop) or None
         self.tap = 0      # data-tap id (1..255); 0 = not interactive
@@ -116,7 +124,20 @@ class _Builder(HTMLParser):
         if "color" in props:
             node.fg = to_rgb565(props["color"], self.diag)
         node.font_size = props.get("font-size", 8)
+        node.radius = max(0, min(255, props.get("border-radius", 0)))
+        node.backdrop_blur = props.get("backdrop-blur", 0)
+        own_opacity = props.get("opacity", 255)
+        # The renderer has no offscreen compositing surface, so parent opacity
+        # is flattened into descendants before each primitive is blended.
+        parent_opacity = self.nodes[parent_idx].opacity
+        node.opacity = (parent_opacity * own_opacity + 127) // 255
         node.anim = _parse_anim(attr_dict, self.diag)  # Phase-1 data-anim (wins if present)
+        if node.anim is not None and node.anim["prop"] == "opacity":
+            # data-anim opacity is the primitive's own CSS alpha. Flatten an
+            # otherwise static parent alpha now, just as static opacity does.
+            node.anim["from"] = (parent_opacity * node.anim["from"] + 127) // 255
+            node.anim["to"] = (parent_opacity * node.anim["to"] + 127) // 255
+            node.opacity = node.anim["from"]
         # Parse data-tap: store tap id (1..255) or 0 if absent/invalid/out-of-range
         try:
             tap_val = int(attr_dict.get("data-tap", "0"))
@@ -158,6 +179,7 @@ class _Builder(HTMLParser):
             node.text = "\n"
             node.fg = parent.fg
             node.font_size = parent.font_size
+            node.opacity = parent.opacity
             self.nodes.append(node)
             self._cur_text_node = len(self.nodes) - 1
 
@@ -185,6 +207,7 @@ class _Builder(HTMLParser):
             node.text = text
             node.fg = parent.fg
             node.font_size = parent.font_size
+            node.opacity = parent.opacity
             self.nodes.append(node)
             self._cur_text_node = len(self.nodes) - 1
 

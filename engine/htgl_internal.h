@@ -9,6 +9,9 @@ extern "C" {
 #endif
 
 #define HTGL_MAX_NODES 256
+#define HTGL_FLAG_CRC32   0x01u
+#define HTGL_FLAG_OPACITY 0x02u
+#define HTGL_FLAG_VISUAL_STYLE 0x04u
 
 #pragma pack(push, 1)
 typedef struct {
@@ -31,7 +34,7 @@ typedef struct {
     uint16_t text_ref;
 } htgl_node;
 
-/* prop: 0=x 1=y 2=w 3=h 4=bg.
+/* prop: 0=x 1=y 2=w 3=h 4=bg 5=opacity.
    mode byte packs two nibbles: loop = mode & 0x0F (0=once 1=loop 2=pingpong),
    ease = (mode >> 4) & 0x0F (0=linear 1=ease-in 2=ease-out 3=ease-in-out).
    For prop=4 (bg), from/to are RGB565 bit-patterns stored as signed int16
@@ -60,11 +63,23 @@ struct htgl_ctx {
     /* animation runtime */
     const htgl_anim *anims;
     int              anim_count;
+    /* V2 blobs add one 0..255 opacity byte per node after Anim[]. V1 keeps
+       this NULL and therefore renders every primitive fully opaque. V3's
+       style table follows it: two bytes per node (radius, backdrop blur). */
+    const uint8_t    *opacities;
+    const uint8_t    *styles;
     int16_t          cur_x[HTGL_MAX_NODES];
     int16_t          cur_y[HTGL_MAX_NODES];
     int16_t          cur_w[HTGL_MAX_NODES];
     int16_t          cur_h[HTGL_MAX_NODES];
+    /* Geometry animations retain Q24.8 state. cur_* above are their rounded
+       pixel values consumed by layout, rendering, and hit testing. */
+    int32_t          cur_x_fp[HTGL_MAX_NODES];
+    int32_t          cur_y_fp[HTGL_MAX_NODES];
+    int32_t          cur_w_fp[HTGL_MAX_NODES];
+    int32_t          cur_h_fp[HTGL_MAX_NODES];
     uint16_t         cur_bg[HTGL_MAX_NODES];
+    uint8_t          cur_opacity[HTGL_MAX_NODES];
     /* touch/tap runtime */
     htgl_tap_cb      tap_cb;
     void            *tap_user;
@@ -75,12 +90,22 @@ struct htgl_ctx {
    The band covers absolute rows [band_y0, band_y0 + band_h). */
 void htgl_fill_rect(uint16_t *band, int band_w, int band_y0, int band_h,
                     int rx, int ry, int rw, int rh, uint16_t color);
+void htgl_fill_rect_alpha(uint16_t *band, int band_w, int band_y0, int band_h,
+                          int rx, int ry, int rw, int rh, uint16_t color,
+                          uint8_t alpha);
+void htgl_fill_rounded_glass_rect(uint16_t *band, int band_w, int band_y0, int band_h,
+                                  int rx, int ry, int rw, int rh, uint16_t color,
+                                  uint8_t alpha, uint8_t radius, uint8_t backdrop_blur);
+uint16_t htgl_blend_rgb565(uint16_t dst, uint16_t src, uint8_t alpha);
 
 /* draw.c: draw ASCII text at absolute (tx,ty) into the band, scaled by `scale`
    (integer >= 1). Background is transparent; only foreground pixels are set. */
 void htgl_draw_text(uint16_t *band, int band_w, int band_y0, int band_h,
                     int tx, int ty, const char *text, int len,
                     int scale, uint16_t color);
+void htgl_draw_text_alpha(uint16_t *band, int band_w, int band_y0, int band_h,
+                          int tx, int ty, const char *text, int len,
+                          int scale, uint16_t color, uint8_t alpha);
 
 #ifdef __cplusplus
 }
